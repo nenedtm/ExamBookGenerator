@@ -1,269 +1,100 @@
 # ExamBookGenerator
 
-### Generatore automatico di manuali universitari Markdown tramite AI locale
+Turn a messy folder of course material into one long, well-organized Markdown study manual, using a local AI model through Ollama.
 
-![Python](https://img.shields.io/badge/Python-3.12+-blue)
-![AI](https://img.shields.io/badge/AI-Ollama-green)
+![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue)
+![Ollama](https://img.shields.io/badge/AI-Ollama-green)
 ![Offline](https://img.shields.io/badge/Offline-Yes-success)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+![MIT License](https://img.shields.io/badge/License-MIT-yellow)
 
----
+## Why this exists
 
-## Indice
+Anyone who's prepared for a university exam knows what the folder looks like:
 
-- [Descrizione](#descrizione)
-- [Obiettivo del progetto](#obiettivo-del-progetto)
-- [Problema che risolve](#problema-che-risolve)
-  - [1. Materiale disorganizzato](#1-materiale-disorganizzato)
-  - [2. Formati diversi](#2-formati-diversi)
-  - [3. Documenti enormi](#3-documenti-enormi)
-  - [4. Organizzazione intelligente](#4-organizzazione-intelligente)
-  - [5. Privacy](#5-privacy)
-- [Funzionamento generale](#funzionamento-generale)
-- [Caratteristiche principali](#caratteristiche-principali)
-- [Architettura software](#architettura-software)
-- [Struttura repository](#struttura-repository)
-- [Moduli principali](#moduli-principali)
-  - [Core](#core)
-  - [Parser Layer](#parser-layer)
-  - [Pipeline di elaborazione](#pipeline-di-elaborazione)
-- [Sistema AI locale](#sistema-ai-locale)
-- [Prompt Engine](#prompt-engine)
-- [Analisi intelligente](#analisi-intelligente)
-- [Creazione indice](#creazione-indice)
-- [Generazione capitoli](#generazione-capitoli)
-- [Template Markdown](#template-markdown)
-- [Validazione](#validazione)
-- [Output finale](#output-finale)
-- [Installazione](#installazione)
-- [Configurazione](#configurazione)
-- [Utilizzo](#utilizzo)
-- [Prestazioni](#prestazioni)
-- [Sviluppi futuri](#sviluppi-futuri)
-- [Filosofia del progetto](#filosofia-del-progetto)
+```
+Exam/
+├── Lecture01.pdf
+├── old notes.docx
+├── professor slides.pptx
+├── scanned textbook.pdf
+├── whiteboard photos/
+├── summaries/
+└── a bunch of random files
+```
 
----
+Some of it is duplicated, some of it is scanned and unreadable as text, and none of it is in any particular order. Turning that into something you can actually study from — reading everything, cutting duplicates, figuring out what matters, giving it structure — is the kind of task that eats days.
 
-## Descrizione
-
-### Cos'è ExamBookGenerator
-
-ExamBookGenerator è un sistema software progettato per trasformare una grande quantità di materiale didattico disorganizzato in un unico manuale digitale strutturato.
-
-L'obiettivo è permettere allo studente di fornire una semplice cartella contenente tutto il materiale di un esame:
-
-- dispense
-- libri
-- slide
-- appunti personali
-- registrazioni trascritte
-- immagini
-- PDF scannerizzati
-
-e ottenere automaticamente un documento Markdown completo, approfondito e organizzato.
-
-Il risultato finale è un file:
+ExamBookGenerator does that step automatically. Point it at the folder, and it outputs a single Markdown file:
 
 ```
 Manuale_Esame.md
 ```
 
-che può contenere anche centinaia di pagine.
+which, depending on how much material you throw at it, can end up hundreds of pages long.
 
----
+## What it actually handles
 
-## Obiettivo del progetto
+**Disorganized input.** No expected folder structure, no naming convention. It walks the directory tree, figures out what each file is, and builds an inventory before doing anything else.
 
-Durante la preparazione di un esame universitario il materiale è spesso frammentato:
+**Mixed formats.**
 
-```
-Esame/
-├── Lezione01.pdf
-├── Appunti vecchi.docx
-├── Slide professore.pptx
-├── Libro scansione.pdf
-├── Foto lavagna/
-├── Riassunti/
-└── file casuali
-```
+| Format            | Handled |
+| ----------------- | ------- |
+| PDF               | yes     |
+| Scanned PDF       | yes (OCR) |
+| DOCX              | yes     |
+| PPTX              | yes     |
+| TXT / Markdown    | yes     |
+| Images            | yes (OCR) |
 
-Lo studente deve manualmente:
+**Large documents.** An 800-page textbook can't just be dumped into a model's context window. Everything gets split into chunks that respect paragraph and section boundaries before it goes anywhere near the LLM.
 
-- leggere tutto
-- eliminare duplicati
-- capire cosa è importante
-- creare una struttura
-- scrivere un riassunto
-- collegare gli argomenti
+**Duplicates.** Course folders accumulate `lezione.pdf`, `lezione copia.pdf`, `lezione definitiva.pdf` — near-identical files that would otherwise get processed three times. A hash pass catches exact duplicates; a similarity pass catches near-duplicates and keeps whichever version is most complete.
 
-Questo processo richiede giorni o settimane.
+**Structure, not just a summary.** The AI step isn't "summarize this PDF." It looks across the whole corpus, works out what the actual topics are, how they relate, and in what order they should be taught — then writes each chapter from that outline plus the relevant source chunks.
 
-ExamBookGenerator automatizza questa fase.
+**Everything stays local.** No document is uploaded anywhere. Generation runs against a local Ollama instance, so course material — some of which may be a professor's copyrighted slides or scans of a textbook — never leaves the machine.
 
----
-
-## Problema che risolve
-
-Il progetto affronta cinque problemi principali.
-
-### 1. Materiale disorganizzato
-
-Il sistema non richiede una struttura precisa.
-
-Può ricevere:
+## How it works, end to end
 
 ```
-Materiale/
-├── lezione_finale.pdf
-├── copia2.pdf
-├── IMG_20250101.jpg
-├── appunti.docx
-└── vecchi/
-    └── roba.pdf
-```
-
-e analizzarlo automaticamente.
-
-### 2. Formati diversi
-
-Supporta:
-
-| Formato           | Supporto |
-| ----------------- | -------- |
-| PDF               | ✅        |
-| PDF scannerizzati | ✅        |
-| DOCX              | ✅        |
-| PPTX              | ✅        |
-| TXT               | ✅        |
-| Markdown          | ✅        |
-| Immagini          | ✅ OCR    |
-
-### 3. Documenti enormi
-
-Un singolo libro può avere:
-
-- 500 pagine
-- 1000 pagine
-- migliaia di paragrafi
-
-Il sistema utilizza una pipeline a blocchi per permettere l'elaborazione tramite modelli AI.
-
-### 4. Organizzazione intelligente
-
-L'AI analizza:
-
-- argomenti
-- collegamenti
-- priorità
-- struttura logica
-
-Non produce un semplice riassunto, ma un manuale.
-
-### 5. Privacy
-
-Tutto funziona localmente.
-
-I documenti personali:
-
-- non vengono caricati online
-- rimangono sul computer
-- vengono elaborati tramite modelli locali
-
----
-
-## Funzionamento generale
-
-Il flusso completo è:
-
-```
-Cartella materiale
+folder of material
         │
         ▼
-Scanner filesystem
+filesystem scan  →  inventory.json
         │
         ▼
-Estrazione testo
+text extraction (per format)
         │
         ▼
-Normalizzazione
+normalization into a common Document type
         │
         ▼
-Eliminazione duplicati
+deduplication
         │
         ▼
-Divisione intelligente
+chunking
         │
         ▼
-Analisi AI
+AI topic analysis  →  topics.json
         │
         ▼
-Creazione indice
+outline generation  →  outline.md
         │
         ▼
-Generazione capitoli
+chapter generation (one per topic)
         │
         ▼
-Validazione
+validation
         │
         ▼
-Merge finale
+merge
         │
         ▼
 Manuale_Esame.md
 ```
 
----
-
-## Caratteristiche principali
-
-### Gestione automatica file
-
-Il sistema:
-
-- ricerca ricorsivamente
-- riconosce formati
-- ignora file inutili
-- crea inventario
-
-### Parser modulari
-
-Ogni formato ha il proprio modulo.
-
-Esempio:
-
-```
-parsers/
-├── pdf_parser.py
-├── docx_parser.py
-├── pptx_parser.py
-└── ocr_parser.py
-```
-
-Ogni parser produce lo stesso oggetto, `Document`, per mantenere uniformità.
-
----
-
-## Architettura software
-
-Il progetto segue un'architettura modulare.
-
-```
-                         USER
-                          │
-                          ▼
-                       main.py
-                          │
-                          ▼
-                Pipeline Controller
-                          │
-        ┌─────────────┬───────────────┬──────────┐
-        ▼             ▼               ▼          ▼
-      Parser        Storage         AI Layer    Utils
-```
-
----
-
-## Struttura repository
+## Project layout
 
 ```
 ExamBookGenerator/
@@ -273,14 +104,14 @@ ExamBookGenerator/
 ├── requirements.txt
 │
 ├── core/
-│   └── models.py
+│   └── models.py              # Document, Chunk, Topic, Chapter
 │
 ├── parsers/
-│   ├── pdf_parser.py
-│   ├── docx_parser.py
-│   ├── pptx_parser.py
+│   ├── pdf_parser.py          # PyMuPDF
+│   ├── docx_parser.py         # python-docx
+│   ├── pptx_parser.py         # python-pptx
 │   ├── text_parser.py
-│   └── ocr_parser.py
+│   └── ocr_parser.py          # Tesseract + Pillow
 │
 ├── pipeline/
 │   ├── scanner.py
@@ -298,7 +129,7 @@ ExamBookGenerator/
 │   └── prompt_manager.py
 │
 ├── storage/
-│   ├── database.py
+│   ├── database.py            # SQLite
 │   └── cache.py
 │
 ├── utils/
@@ -306,194 +137,22 @@ ExamBookGenerator/
 │   └── config.py
 │
 ├── tests/
-│
 └── output/
 ```
 
----
+## The core pieces
 
-## Moduli principali
+**`core/models.py`** defines the shared data types every other module passes around: `Document` (title, source, content, metadata), `Chunk` (a piece of a document sized for the model), `Topic`, and `Chapter`. Nothing else in the codebase should invent its own ad-hoc representation of a document.
 
-### Core
+**Parsers** all do one job: take a file, return a `Document`. Whatever format it came from is irrelevant past this point.
 
-Contiene gli oggetti condivisi.
+**The pipeline** is the sequence described above — scan, normalize, deduplicate, chunk, analyze, outline, generate, validate, merge. Each stage is its own module and can be run or tested independently.
 
-**Document** — rappresenta un file elaborato. Contiene:
+**`llm/`** wraps Ollama. `ollama_client.py` handles the actual HTTP calls, connection checks, retries and timeouts; `prompt_manager.py` keeps every prompt template out of the Python code so tone, depth and structure can be tuned without touching logic.
 
-```python
-Document(
-    title,
-    source,
-    content,
-    metadata
-)
-```
+## Templates
 
-**Chunk** — rappresenta una porzione compatibile con il modello AI.
-
-**Topic** — rappresenta un argomento.
-
-**Chapter** — rappresenta un capitolo generato.
-
-### Parser Layer
-
-Responsabilità: convertire qualsiasi formato in testo.
-
-**PDF Parser** — utilizza PyMuPDF. Funzioni: estrazione testo, metadata, numero pagine.
-
-**DOCX Parser** — utilizza python-docx. Estrae: paragrafi, tabelle, struttura.
-
-**PPTX Parser** — utilizza python-pptx. Estrae: slide, titoli, contenuti.
-
-**OCR Parser** — utilizza Tesseract e Pillow. Permette di leggere: foto, scansioni, immagini.
-
-### Pipeline di elaborazione
-
-**1. Scanner**
-
-Analizza la cartella:
-
-```
-input/
-├── lezione.pdf
-├── foto.jpg
-└── libro.docx
-```
-
-creando:
-
-```
-inventory.json
-```
-
-**2. Normalizzazione**
-
-Tutti i documenti diventano `Document`, indipendentemente dal formato.
-
-**3. Deduplicazione**
-
-Il sistema identifica copie identiche e versioni simili.
-
-Esempio:
-
-```
-lezione.pdf
-lezione copia.pdf
-lezione definitiva.pdf
-```
-
-vengono confrontati.
-
-**4. Chunking**
-
-Documenti grandi (es. un libro da 900 pagine) diventano:
-
-```
-Chunk 1
-Chunk 2
-Chunk 3
-```
-
----
-
-## Sistema AI locale
-
-### Ollama
-
-L'AI viene gestita tramite Ollama.
-
-Modelli compatibili:
-
-- Qwen
-- Llama
-- Mistral
-
-Esempio:
-
-```bash
-ollama run qwen3:32b
-```
-
----
-
-## Prompt Engine
-
-I prompt non sono scritti nel codice. Sono gestiti da:
-
-```
-llm/prompt_manager.py
-```
-
-Permette:
-
-- modificare stile
-- cambiare profondità
-- cambiare struttura
-
----
-
-## Analisi intelligente
-
-Prima di scrivere il manuale, l'AI crea:
-
-```
-topics.json
-```
-
-Esempio:
-
-```json
-[
-  {
-    "name": "Metabolismo",
-    "sources": [1, 5, 7]
-  }
-]
-```
-
----
-
-## Creazione indice
-
-Produce:
-
-```
-outline.md
-```
-
-Esempio:
-
-```markdown
-# Capitolo 1
-
-## Introduzione
-
-## Concetti fondamentali
-
-## Applicazioni
-```
-
----
-
-## Generazione capitoli
-
-Ogni capitolo viene generato separatamente.
-
-Input: argomento + fonti + template
-
-Output:
-
-```
-capitolo01.md
-```
-
----
-
-## Template Markdown
-
-L'utente può definire la struttura.
-
-Esempio:
+Chapter structure is controlled by `template.md`, not hardcoded:
 
 ```markdown
 # {{titolo}}
@@ -511,69 +170,21 @@ Esempio:
 {{questions}}
 ```
 
----
+Change the template, change the shape of every generated chapter.
 
-## Validazione
+## Installing it
 
-Prima del risultato finale il sistema controlla:
-
-- sezioni mancanti
-- errori Markdown
-- capitoli vuoti
-- ripetizioni
-
----
-
-## Output finale
-
-Esempio:
-
-```
-output/
-└── Manuale_Esame.md
-```
-
-Struttura:
-
-```markdown
-# Biologia cellulare
-
-## Capitolo 1
-
-### Membrana cellulare
-
-...
-
-### Domande d'esame
-
-1. ...
-```
-
----
-
-## Installazione
-
-### Requisiti
-
-- Python 3.12+
-- Ollama
-- almeno 16GB RAM consigliati
-
-### Installazione
+Requirements: Python 3.12+, [Ollama](https://ollama.ai) installed and running, and ideally 16 GB of RAM — generation quality and speed both depend heavily on which local model you run.
 
 ```bash
 git clone https://github.com/user/ExamBookGenerator
-
 cd ExamBookGenerator
-
 pip install -r requirements.txt
 ```
 
----
+## Configuring it
 
-## Configurazione
-
-File `config.yaml`:
+Everything lives in `config.yaml`:
 
 ```yaml
 model:
@@ -585,9 +196,7 @@ generation:
   depth: high
 ```
 
----
-
-## Utilizzo
+## Running it
 
 ```bash
 python main.py \
@@ -595,57 +204,24 @@ python main.py \
   --template template.md
 ```
 
-Output:
+Output lands at `output/Manuale_Esame.md`.
 
-```
-output/Manuale_Esame.md
-```
+## How long it takes
 
----
+Depends entirely on the model and the machine, but roughly:
 
-## Prestazioni
+| Material     | Time            |
+| ------------ | --------------- |
+| 100 pages    | a few minutes   |
+| 500 pages    | tens of minutes |
+| 1000+ pages  | hours           |
 
-Dipendono dal modello.
+Runs are cached and resumable, so a crash or interruption partway through a 900-page textbook doesn't mean starting over.
 
-Indicativamente:
+## Where this could go
 
-| Materiale    | Tempo         |
-| ------------ | ------------- |
-| 100 pagine   | alcuni minuti |
-| 500 pagine   | decine minuti |
-| 1000+ pagine | ore           |
+Video lecture support, audio transcription, semantic search over the generated manual, a web UI instead of the CLI, PDF export, auto-generated flashcards and quizzes, maybe an interactive tutor mode on top of the finished material. None of this is built yet — the current focus is getting the core pipeline (scan → parse → dedupe → generate) solid first.
 
-Il sistema usa:
+## The point of it
 
-- cache
-- elaborazione incrementale
-- ripresa automatica
-
----
-
-## Sviluppi futuri
-
-Possibili estensioni:
-
-- supporto video lezioni
-- trascrizione audio
-- ricerca semantica
-- interfaccia web
-- esportazione PDF
-- flashcard automatiche
-- generazione quiz
-- modalità tutor AI
-
----
-
-## Filosofia del progetto
-
-ExamBookGenerator non nasce come semplice riassuntore.
-
-L'obiettivo è creare un **sistema personale di creazione manuali**, capace di trasformare materiale grezzo e disordinato in una risorsa di studio completa, mantenendo:
-
-- controllo locale
-- privacy
-- personalizzazione
-- qualità del contenuto
-- scalabilità
+This isn't meant to be a PDF summarizer. The goal is a manual — something with an actual structure, written for someone trying to learn the material, not just a compressed version of the source files. And it's meant to stay something you run on your own machine, on your own notes, without your course material passing through anyone else's server.
