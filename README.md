@@ -1,100 +1,146 @@
 # ExamBookGenerator
 
-Turn a messy folder of course material into one long, well-organized Markdown study manual, using a local AI model through Ollama.
+### Local AI-powered academic material transformation system
 
-![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue)
-![Ollama](https://img.shields.io/badge/AI-Ollama-green)
-![Offline](https://img.shields.io/badge/Offline-Yes-success)
-![MIT License](https://img.shields.io/badge/License-MIT-yellow)
+![Python](https://img.shields.io/badge/Python-3.12+-blue)
+![AI](https://img.shields.io/badge/AI-Ollama-green)
+![Offline](https://img.shields.io/badge/Execution-Local-success)
+![Markdown](https://img.shields.io/badge/Output-Markdown-orange)
+![Multimodal](https://img.shields.io/badge/AI-Vision-purple)
+![Status](https://img.shields.io/badge/Status-In%20Development-yellow)
 
-## Why this exists
+---
 
-Anyone who's prepared for a university exam knows what the folder looks like:
+## Overview
 
-```
-Exam/
-├── Lecture01.pdf
-├── old notes.docx
-├── professor slides.pptx
-├── scanned textbook.pdf
-├── whiteboard photos/
-├── summaries/
-└── a bunch of random files
-```
+**ExamBookGenerator** is a fully local, AI-powered document processing system that turns a messy folder of academic material into a single, structured, customizable exam manual.
 
-Some of it is duplicated, some of it is scanned and unreadable as text, and none of it is in any particular order. Turning that into something you can actually study from — reading everything, cutting duplicates, figuring out what matters, giving it structure — is the kind of task that eats days.
+Point it at a folder containing:
 
-ExamBookGenerator does that step automatically. Point it at the folder, and it outputs a single Markdown file:
+- PDF books (including scanned PDFs)
+- lecture notes
+- PowerPoint slides
+- DOCX documents
+- Markdown / TXT files
+- photos of whiteboards
+- duplicated files and randomly organized subfolders
 
-```
-Manuale_Esame.md
-```
+and it will:
 
-which, depending on how much material you throw at it, can end up hundreds of pages long.
+1. scan every file;
+2. extract text **and images**;
+3. normalize and deduplicate the content;
+4. split it into AI-compatible chunks;
+5. identify the academic topics it covers;
+6. build a logical manual structure;
+7. generate detailed, exam-focused chapters — reusing real images from your material where they help explain a concept;
+8. validate the result;
+9. merge everything into one file.
 
-## What it actually handles
-
-**Disorganized input.** No expected folder structure, no naming convention. It walks the directory tree, figures out what each file is, and builds an inventory before doing anything else.
-
-**Mixed formats.**
-
-| Format            | Handled |
-| ----------------- | ------- |
-| PDF               | yes     |
-| Scanned PDF       | yes (OCR) |
-| DOCX              | yes     |
-| PPTX              | yes     |
-| TXT / Markdown    | yes     |
-| Images            | yes (OCR) |
-
-**Large documents.** An 800-page textbook can't just be dumped into a model's context window. Everything gets split into chunks that respect paragraph and section boundaries before it goes anywhere near the LLM.
-
-**Duplicates.** Course folders accumulate `lezione.pdf`, `lezione copia.pdf`, `lezione definitiva.pdf` — near-identical files that would otherwise get processed three times. A hash pass catches exact duplicates; a similarity pass catches near-duplicates and keeps whichever version is most complete.
-
-**Structure, not just a summary.** The AI step isn't "summarize this PDF." It looks across the whole corpus, works out what the actual topics are, how they relate, and in what order they should be taught — then writes each chapter from that outline plus the relevant source chunks.
-
-**Everything stays local.** No document is uploaded anywhere. Generation runs against a local Ollama instance, so course material — some of which may be a professor's copyrighted slides or scans of a textbook — never leaves the machine.
-
-## How it works, end to end
+**Output:**
 
 ```
-folder of material
-        │
-        ▼
-filesystem scan  →  inventory.json
-        │
-        ▼
-text extraction (per format)
-        │
-        ▼
-normalization into a common Document type
-        │
-        ▼
-deduplication
-        │
-        ▼
-chunking
-        │
-        ▼
-AI topic analysis  →  topics.json
-        │
-        ▼
-outline generation  →  outline.md
-        │
-        ▼
-chapter generation (one per topic)
-        │
-        ▼
-validation
-        │
-        ▼
-merge
-        │
-        ▼
-Manuale_Esame.md
+output/
+├── Exam_Manual.md
+└── assets/
+    └── images/
 ```
 
-## Project layout
+The manual is **always generated in English**, regardless of the language of the source material.
+
+---
+
+## Why not just "summarize it"?
+
+The goal isn't a summary — it's a **generated textbook** built from your own material. There is no artificial page limit and no fixed word target: the manual's length and depth are a direct function of what you feed it and how you configure it.
+
+| Input | Result |
+|---|---|
+| A single topic, 5 chunks of material | A short chapter |
+| A full course, 120 chunks across dozens of topics | A large, detailed textbook |
+
+---
+
+## Key Features
+
+### 🔒 Fully local — no cloud APIs
+
+Everything runs through [Ollama](https://ollama.com). No data leaves your machine.
+
+Suggested models:
+
+- **Text:** Qwen, Llama, Mistral (or any Ollama-compatible chat model)
+- **Vision:** Llava (or any Ollama-compatible multimodal model)
+
+### 📏 Dynamic, topic-driven length
+
+The final length is **not** a fixed target ("write 200 pages"). It scales automatically with:
+
+```
+number of topics + number of subtopics + amount of source material + depth_level
+```
+
+More topics → a longer manual. A short exam and a full university course never look the same size.
+
+### 🎚️ Configurable depth level (1–10)
+
+A single `depth_level` parameter controls how much detail every chapter gets — **without ever skipping topics**, even at the lowest setting:
+
+| Level | Style |
+|---|---|
+| 1–2 | Minimal but complete summary — every topic covered, briefly |
+| 3–5 | Balanced academic explanation, with examples |
+| 6–8 | Detailed textbook style: mechanisms, derivations, exam-focused notes |
+| 9–10 | Exhaustive: edge cases, formulas, exceptions, every relevant detail |
+
+### 🖼️ Real images, never generated ones
+
+The system extracts images actually embedded in your PDFs, DOCX files, and PPTX slides (diagrams, graphs, whiteboard photos, slide screenshots) and, using a local vision model, decides — per chapter — whether one of them is worth inserting and where.
+
+**It never fabricates new images.** If nothing relevant exists in your material, no image is added.
+
+```
+Source documents
+       │
+       ▼
+Image extraction & deduplication
+       │
+       ▼
+Vision-model description
+       │
+       ▼
+Relevance check per chapter
+       │
+       ▼
+Inserted into the right chapter (or skipped)
+```
+
+---
+
+## Architecture
+
+```
+                         USER
+                          │
+                     CLI  /  GUI
+                          │
+                   Main Controller
+                          │
+      ┌────────────┬──────────────┬─────────────┐
+      │             │              │             │
+   Parsers       Pipeline       LLM Layer      Storage
+```
+
+### Pipeline
+
+```
+Input folder → Scanner → Parsers (+ image extraction) → Normalization
+   → Deduplication → Chunking → Topic analysis → Outline generation
+   → Template → Image matching → Chapter generation → Validation
+   → Final merge → Exam_Manual.md
+```
+
+### Repository structure
 
 ```
 ExamBookGenerator/
@@ -104,124 +150,168 @@ ExamBookGenerator/
 ├── requirements.txt
 │
 ├── core/
-│   └── models.py              # Document, Chunk, Topic, Chapter
+│   └── models.py              # Document, Chunk, Topic, Chapter, ExtractedImage
 │
 ├── parsers/
-│   ├── pdf_parser.py          # PyMuPDF
-│   ├── docx_parser.py         # python-docx
-│   ├── pptx_parser.py         # python-pptx
+│   ├── pdf_parser.py
+│   ├── docx_parser.py
+│   ├── pptx_parser.py
 │   ├── text_parser.py
-│   └── ocr_parser.py          # Tesseract + Pillow
+│   └── ocr_parser.py
 │
 ├── pipeline/
 │   ├── scanner.py
+│   ├── image_extractor.py     # [v2] shared image extraction/dedup
 │   ├── normalizer.py
 │   ├── deduplicator.py
 │   ├── chunker.py
 │   ├── topic_analyzer.py
 │   ├── outline_generator.py
+│   ├── template_engine.py
+│   ├── image_matcher.py       # [v2] vision-based image placement
 │   ├── chapter_generator.py
 │   ├── validator.py
 │   └── merge.py
 │
 ├── llm/
-│   ├── ollama_client.py
+│   ├── ollama_client.py       # text + vision (generate_with_image)
 │   └── prompt_manager.py
 │
 ├── storage/
-│   ├── database.py            # SQLite
+│   ├── database.py
 │   └── cache.py
 │
 ├── utils/
 │   ├── logger.py
 │   └── config.py
 │
+├── gui/
+│   └── app.py
+│
 ├── tests/
 └── output/
 ```
 
-## The core pieces
+---
 
-**`core/models.py`** defines the shared data types every other module passes around: `Document` (title, source, content, metadata), `Chunk` (a piece of a document sized for the model), `Topic`, and `Chapter`. Nothing else in the codebase should invent its own ad-hoc representation of a document.
+## Core data models
 
-**Parsers** all do one job: take a file, return a `Document`. Whatever format it came from is irrelevant past this point.
+| Model | Purpose |
+|---|---|
+| `Document` | A parsed source file: metadata, extracted text, linked images |
+| `Chunk` | An AI-compatible text section (books don't fit in one prompt) |
+| `Topic` | An academic concept: title, description, sources, subtopic count |
+| `Chapter` | A generated manual chapter: title, Markdown content, order, images |
+| `ExtractedImage` | A real image pulled from the source material, with its AI-generated description |
 
-**The pipeline** is the sequence described above — scan, normalize, deduplicate, chunk, analyze, outline, generate, validate, merge. Each stage is its own module and can be run or tested independently.
+---
 
-**`llm/`** wraps Ollama. `ollama_client.py` handles the actual HTTP calls, connection checks, retries and timeouts; `prompt_manager.py` keeps every prompt template out of the Python code so tone, depth and structure can be tuned without touching logic.
+## Supported input formats
 
-## Templates
+| Format | Support |
+|---|---|
+| PDF (incl. scanned) | ✅ |
+| DOCX | ✅ |
+| PPTX | ✅ |
+| TXT / Markdown | ✅ |
+| PNG / JPG | ✅ |
 
-Chapter structure is controlled by `template.md`, not hardcoded:
+---
 
-```markdown
-# {{titolo}}
+## Configuration
 
-## Introduzione
-
-{{introduzione}}
-
-## Spiegazione approfondita
-
-{{contenuto}}
-
-## Domande esame
-
-{{questions}}
-```
-
-Change the template, change the shape of every generated chapter.
-
-## Installing it
-
-Requirements: Python 3.12+, [Ollama](https://ollama.ai) installed and running, and ideally 16 GB of RAM — generation quality and speed both depend heavily on which local model you run.
-
-```bash
-git clone https://github.com/user/ExamBookGenerator
-cd ExamBookGenerator
-pip install -r requirements.txt
-```
-
-## Configuring it
-
-Everything lives in `config.yaml`:
+`config.yaml`:
 
 ```yaml
-model:
-  provider: ollama
-  name: qwen3:32b
+output:
+  language: "en"                    # the manual is always generated in English
+  filename: "Exam_Manual.md"
 
 generation:
-  language: italian
-  depth: high
+  depth_level: 5                    # 1-10: 1 = minimal summary, 10 = maximum detail
+  length_mode: "topic_driven"       # length always scales with topics, never fixed
+
+images:
+  extract: true
+  match_to_chapters: true
+  vision_model: "llava"
+  assets_dir: "output/assets/images"
 ```
 
-## Running it
+---
+
+## Installation
+
+Requirements: **Python 3.12+** and [Ollama](https://ollama.com) installed locally.
 
 ```bash
-python main.py \
-  --input ./MaterialeEsame \
-  --template template.md
+pip install -r requirements.txt
+
+# text model
+ollama pull qwen3
+
+# vision model (optional — required only for image matching)
+ollama pull llava
 ```
 
-Output lands at `output/Manuale_Esame.md`.
+---
 
-## How long it takes
+## Usage
 
-Depends entirely on the model and the machine, but roughly:
+```bash
+# basic run
+python main.py --input ./StudyMaterial
 
-| Material     | Time            |
-| ------------ | --------------- |
-| 100 pages    | a few minutes   |
-| 500 pages    | tens of minutes |
-| 1000+ pages  | hours           |
+# custom depth level
+python main.py --input ./StudyMaterial --depth 9
 
-Runs are cached and resumable, so a crash or interruption partway through a 900-page textbook doesn't mean starting over.
+# disable image extraction/matching for this run
+python main.py --input ./StudyMaterial --no-images
+```
 
-## Where this could go
+---
 
-Video lecture support, audio transcription, semantic search over the generated manual, a web UI instead of the CLI, PDF export, auto-generated flashcards and quizzes, maybe an interactive tutor mode on top of the finished material. None of this is built yet — the current focus is getting the core pipeline (scan → parse → dedupe → generate) solid first.
+## Performance
 
-## The point of it
+Optimized for large, messy datasets via SQLite caching, document hashing, and incremental, chunk-based generation.
 
-This isn't meant to be a PDF summarizer. The goal is a manual — something with an actual structure, written for someone trying to learn the material, not just a compressed version of the source files. And it's meant to stay something you run on your own machine, on your own notes, without your course material passing through anyone else's server.
+| Source size | Rough time |
+|---|---|
+| 100 pages | minutes |
+| 500 pages | tens of minutes |
+| 1000+ pages | hours, depending on hardware and model |
+
+---
+
+## Development approach
+
+This project is built incrementally through **28 independent, self-contained development prompts** — one per module — so that each one can be handed to a fresh LLM chat with zero prior context and still produce correct, integration-ready code. The step order follows real module dependencies (no step ever needs a file produced by a later step), so following them 1 → 28 in order yields the complete, working project.
+
+| Phase | Steps |
+|---|---|
+| Foundation | 1–4 |
+| Document processing & image extraction | 5–11 |
+| Data pipeline | 12–15 |
+| AI core (Ollama client, prompts, topics, outline) | 16–19 |
+| Content & image assembly | 20–24 |
+| User interface | 25–26 |
+| Testing & packaging | 27–28 |
+
+The full prompt series lives in [`ExamBookGenerator___Serie_Completa_di_Prompt_Indipendenti.md`](./ExamBookGenerator___Serie_Completa_di_Prompt_Indipendenti.md).
+
+---
+
+## Roadmap / possible extensions
+
+- Automatic flashcards and quizzes
+- Spaced-repetition integration
+- PDF export of the final manual
+- Web interface
+- Semantic search over your own material
+- Voice lecture transcription
+
+---
+
+## Philosophy
+
+> Transform unorganized academic material into a personalized textbook, using local artificial intelligence — nothing leaves your machine, and nothing is invented that wasn't already in your own material.
