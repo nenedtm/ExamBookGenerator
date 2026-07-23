@@ -2,9 +2,25 @@ output:
   language: "en"
   filename: "Exam_Manual.md"
 
+llm:
+  host: "http://127.0.0.1:11434"
+  model: "llama3"
+  timeout: 120
+  max_retries: 3
+
+structure:
+  include_toc: true
+
+syllabus:
+  enabled: "auto"
+  path: null
+
 generation:
   depth_level: 5
   length_mode: "topic_driven"
+  scope: "full"
+  focus_topic: null
+  focus_depth_level: null
 
 images:
   extract: true

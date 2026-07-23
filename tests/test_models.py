@@ -10,6 +10,7 @@ from core.models import (
     Document,
     ExtractedImage,
     FileType,
+    IndexEntry,
     Topic,
     _new_id,
 )
@@ -193,3 +194,73 @@ class TestChapter:
     def test_negative_order_raises(self) -> None:
         with pytest.raises(ValueError, match="order"):
             Chapter(title="t", order=-1)
+
+
+# ── v3: Document.is_syllabus ────────────────────────────────────────────────
+
+class TestDocumentIsSyllabus:
+    def test_default_false(self) -> None:
+        doc = Document()
+        assert doc.is_syllabus is False
+
+    def test_can_set_true(self) -> None:
+        doc = Document(is_syllabus=True)
+        assert doc.is_syllabus is True
+
+
+# ── v3: Topic order_source / syllabus_position ──────────────────────────────
+
+class TestTopicV3:
+    def test_default_order_source(self) -> None:
+        topic = Topic(name="Algebra")
+        assert topic.order_source == "pedagogical"
+
+    def test_syllabus_order_source(self) -> None:
+        topic = Topic(name="Algebra", order_source="syllabus", syllabus_position=3)
+        assert topic.order_source == "syllabus"
+        assert topic.syllabus_position == 3
+
+    def test_syllabus_position_default_none(self) -> None:
+        topic = Topic(name="Algebra")
+        assert topic.syllabus_position is None
+
+
+# ── v3: Chapter.toc_entries ─────────────────────────────────────────────────
+
+class TestChapterV3:
+    def test_default_toc_entries(self) -> None:
+        ch = Chapter(title="Intro")
+        assert ch.toc_entries == []
+
+    def test_custom_toc_entries(self) -> None:
+        ch = Chapter(title="Intro", toc_entries=["Overview", "History", "Methods"])
+        assert len(ch.toc_entries) == 3
+
+
+# ── IndexEntry ──────────────────────────────────────────────────────────────
+
+class TestIndexEntry:
+    def test_create_with_title(self) -> None:
+        entry = IndexEntry(title="Vector Spaces", anchor="vector-spaces", level=1, order=0)
+        assert entry.title == "Vector Spaces"
+        assert entry.anchor == "vector-spaces"
+        assert entry.level == 1
+        assert entry.order == 0
+
+    def test_missing_title_raises(self) -> None:
+        with pytest.raises(ValueError, match="title"):
+            IndexEntry(title="")
+
+    def test_level_below_one_raises(self) -> None:
+        with pytest.raises(ValueError, match="level"):
+            IndexEntry(title="X", level=0)
+
+    def test_negative_order_raises(self) -> None:
+        with pytest.raises(ValueError, match="order"):
+            IndexEntry(title="X", order=-1)
+
+    def test_defaults(self) -> None:
+        entry = IndexEntry(title="Section")
+        assert entry.anchor == ""
+        assert entry.level == 1
+        assert entry.order == 0

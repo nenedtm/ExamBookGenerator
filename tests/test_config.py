@@ -142,3 +142,117 @@ class TestFileNotFound:
     def test_missing_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
             ConfigManager(Path("/definitely/does/not/exist.yaml"))
+
+
+# ── v3: scope validation ────────────────────────────────────────────────────
+
+class TestScopeValidation:
+    def test_default_scope_is_full(self, cfg: ConfigManager) -> None:
+        assert cfg.get("generation.scope") == "full"
+
+    def test_valid_scope_full(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("generation:\n  scope: full\n")
+        assert cfg.get("generation.scope") == "full"
+
+    def test_valid_scope_topic(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("generation:\n  scope: topic\n  focus_topic: Algebra\n")
+        assert cfg.get("generation.scope") == "topic"
+
+    def test_invalid_scope_raises(self, tmp_cfg: callable) -> None:
+        with pytest.raises(ConfigValidationError, match="scope"):
+            tmp_cfg("generation:\n  scope: invalid\n")
+
+
+# ── v3: focus_topic validation ──────────────────────────────────────────────
+
+class TestFocusTopicValidation:
+    def test_topic_scope_requires_focus_topic(self, tmp_cfg: callable) -> None:
+        with pytest.raises(ConfigValidationError, match="focus_topic"):
+            tmp_cfg("generation:\n  scope: topic\n")
+
+    def test_topic_scope_with_focus_topic(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("generation:\n  scope: topic\n  focus_topic: Algebra Lineare\n")
+        assert cfg.get("generation.focus_topic") == "Algebra Lineare"
+
+    def test_full_scope_focus_topic_ignored(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("generation:\n  scope: full\n  focus_topic: Algebra\n")
+        assert cfg.get("generation.scope") == "full"
+
+
+# ── v3: focus_depth_level validation ────────────────────────────────────────
+
+class TestFocusDepthLevelValidation:
+    def test_valid_focus_depth(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg(
+            "generation:\n  scope: topic\n  focus_topic: Calc\n"
+            "  focus_depth_level: 8\n"
+        )
+        assert cfg.get("generation.focus_depth_level") == 8
+
+    def test_focus_depth_below_min_clamps(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg(
+            "generation:\n  scope: topic\n  focus_topic: Calc\n"
+            "  focus_depth_level: 0\n"
+        )
+        assert cfg.get("generation.focus_depth_level") == 1
+
+    def test_focus_depth_above_max_clamps(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg(
+            "generation:\n  scope: topic\n  focus_topic: Calc\n"
+            "  focus_depth_level: 20\n"
+        )
+        assert cfg.get("generation.focus_depth_level") == 10
+
+    def test_focus_depth_string_raises(self, tmp_cfg: callable) -> None:
+        with pytest.raises(ConfigValidationError, match="integer"):
+            tmp_cfg(
+                "generation:\n  scope: topic\n  focus_topic: Calc\n"
+                "  focus_depth_level: high\n"
+            )
+
+    def test_focus_depth_none_is_valid(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("generation:\n  scope: full\n")
+        assert cfg.get("generation.focus_depth_level") is None
+
+
+# ── v3: get_effective_depth_level ───────────────────────────────────────────
+
+class TestEffectiveDepthLevel:
+    def test_full_scope_returns_global(self, cfg: ConfigManager) -> None:
+        assert cfg.get_effective_depth_level() == 5
+
+    def test_topic_scope_with_focus(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg(
+            "generation:\n  scope: topic\n  focus_topic: Calc\n"
+            "  focus_depth_level: 3\n"
+        )
+        assert cfg.get_effective_depth_level() == 3
+
+    def test_topic_scope_fallback_to_global(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg(
+            "generation:\n  depth_level: 7\n  scope: topic\n  focus_topic: Calc\n"
+        )
+        assert cfg.get_effective_depth_level() == 7
+
+
+# ── v3: syllabus.enabled validation ────────────────────────────────────────
+
+class TestSyllabusEnabledValidation:
+    def test_default_is_auto(self, cfg: ConfigManager) -> None:
+        assert cfg.get("syllabus.enabled") == "auto"
+
+    def test_valid_auto(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("syllabus:\n  enabled: auto\n")
+        assert cfg.get("syllabus.enabled") == "auto"
+
+    def test_valid_true(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("syllabus:\n  enabled: true\n")
+        assert cfg.get("syllabus.enabled") is True
+
+    def test_valid_false(self, tmp_cfg: callable) -> None:
+        cfg = tmp_cfg("syllabus:\n  enabled: false\n")
+        assert cfg.get("syllabus.enabled") is False
+
+    def test_invalid_raises(self, tmp_cfg: callable) -> None:
+        with pytest.raises(ConfigValidationError, match="syllabus.enabled"):
+            tmp_cfg("syllabus:\n  enabled: maybe\n")

@@ -27,9 +27,25 @@ _DEFAULTS: dict[str, Any] = {
         "language": "en",
         "filename": "Exam_Manual.md",
     },
+    "llm": {
+        "host": "http://127.0.0.1:11434",
+        "model": "llama3",
+        "timeout": 120,
+        "max_retries": 3,
+    },
+    "structure": {
+        "include_toc": True,
+    },
+    "syllabus": {
+        "enabled": "auto",
+        "path": None,
+    },
     "generation": {
         "depth_level": 5,
         "length_mode": "topic_driven",
+        "scope": "full",
+        "focus_topic": None,
+        "focus_depth_level": None,
     },
     "images": {
         "extract": True,
@@ -181,6 +197,34 @@ class ConfigManager:
         self._validate_depth_level()
         self._validate_language()
         self._validate_vision_model()
+        self._validate_scope()
+        self._validate_syllabus_enabled()
+        self._validate_focus_topic()
+        self._validate_focus_depth_level()
+        self._validate_llm()
+
+    # ── v3 helpers ──────────────────────────────────────────────────────
+
+    def get_effective_depth_level(self) -> int:
+        """Return the active depth level for the current scope.
+
+        When ``generation.scope == "topic"`` and ``focus_depth_level`` is
+        set, that value is returned.  Otherwise falls back to the global
+        ``generation.depth_level``.
+        """
+        scope = self.get("generation.scope", "full")
+        if scope == "topic":
+            focus = self.get("generation.focus_depth_level")
+            if focus is not None:
+                return focus
+            base = self.get("generation.depth_level")
+            logger.warning(
+                "generation.focus_depth_level not set in topic mode — "
+                "falling back to generation.depth_level (%d)",
+                base,
+            )
+            return base
+        return self.get("generation.depth_level")
 
     def _validate_depth_level(self) -> None:
         raw_value = self.get("generation.depth_level")
@@ -220,3 +264,63 @@ class ConfigManager:
                 "disabled (fallback: images skipped). Pull it with: ollama pull %s",
                 model, model,
             )
+
+    def _validate_scope(self) -> None:
+        scope = self.get("generation.scope")
+        if scope not in ("full", "topic"):
+            raise ConfigValidationError(
+                f"generation.scope must be 'full' or 'topic', got {scope!r}"
+            )
+
+    def _validate_syllabus_enabled(self) -> None:
+        enabled = self.get("syllabus.enabled")
+        if enabled not in ("auto", True, False):
+            raise ConfigValidationError(
+                f"syllabus.enabled must be 'auto', true, or false, got {enabled!r}"
+            )
+
+    def _validate_focus_topic(self) -> None:
+        scope = self.get("generation.scope")
+        if scope == "topic":
+            topic = self.get("generation.focus_topic")
+            if not topic:
+                raise ConfigValidationError(
+                    "generation.focus_topic is required when generation.scope == 'topic'"
+                )
+
+    def _validate_focus_depth_level(self) -> None:
+        raw = self.get("generation.focus_depth_level")
+        if raw is None:
+            return
+        if not isinstance(raw, int):
+            raise ConfigValidationError(
+                f"generation.focus_depth_level must be an integer, got {type(raw).__name__}"
+            )
+        if raw < _DEPTH_MIN or raw > _DEPTH_MAX:
+            logger.warning(
+                "generation.focus_depth_level=%d is outside range %d-%d — clamping",
+                raw, _DEPTH_MIN, _DEPTH_MAX,
+            )
+            clamped = max(_DEPTH_MIN, min(_DEPTH_MAX, raw))
+            self.set("generation.focus_depth_level", clamped)
+
+    def _validate_llm(self) -> None:
+        host = self.get("llm.host")
+        if not host or not isinstance(host, str):
+            logger.warning("llm.host not set — defaulting to http://127.0.0.1:11434")
+            self.set("llm.host", "http://127.0.0.1:11434")
+
+        model = self.get("llm.model")
+        if not model or not isinstance(model, str):
+            logger.warning("llm.model not set — defaulting to 'llama3'")
+            self.set("llm.model", "llama3")
+
+        timeout = self.get("llm.timeout")
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            logger.warning("llm.timeout must be a positive number — defaulting to 120")
+            self.set("llm.timeout", 120)
+
+        max_retries = self.get("llm.max_retries")
+        if not isinstance(max_retries, int) or max_retries < 0:
+            logger.warning("llm.max_retries must be a non-negative integer — defaulting to 3")
+            self.set("llm.max_retries", 3)

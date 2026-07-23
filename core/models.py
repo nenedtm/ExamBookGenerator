@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 
 def _new_id() -> str:
@@ -106,6 +107,7 @@ class Document:
     content: str = ""
     metadata: dict[str, str | int | float | bool] = field(default_factory=dict)
     images: list[str] = field(default_factory=list)
+    is_syllabus: bool = False
 
     def __post_init__(self) -> None:
         if not self.title:
@@ -160,6 +162,8 @@ class Topic:
     description: str = ""
     related_documents: list[str] = field(default_factory=list)
     subtopic_count: int = 0
+    order_source: Literal["syllabus", "pedagogical", "manual"] = "pedagogical"
+    syllabus_position: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -188,9 +192,42 @@ class Chapter:
     content: str = ""
     order: int = 0
     images: list[str] = field(default_factory=list)
+    toc_entries: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.title:
             raise ValueError("title is required")
+        if self.order < 0:
+            raise ValueError(f"order must be >= 0, got {self.order}")
+
+
+# ── v3 models ────────────────────────────────────────────────────────────────
+
+@dataclass
+class IndexEntry:
+    """A single entry in a programmatically-built table of contents.
+
+    Attributes
+    ----------
+    title:
+        Display text for this entry (e.g. ``"Vector Spaces"``).
+    anchor:
+        Markdown-friendly slug used for internal links (e.g. ``"vector-spaces"``).
+    level:
+        Nesting depth — 1 for top-level chapters, 2 for sub-sections, etc.
+    order:
+        Sequential position in the document (0-based).
+    """
+
+    title: str = ""
+    anchor: str = ""
+    level: int = 1
+    order: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.title:
+            raise ValueError("title is required")
+        if self.level < 1:
+            raise ValueError(f"level must be >= 1, got {self.level}")
         if self.order < 0:
             raise ValueError(f"order must be >= 0, got {self.order}")

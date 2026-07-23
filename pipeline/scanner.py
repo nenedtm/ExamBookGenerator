@@ -35,6 +35,14 @@ _EXTENSION_MAP: dict[str, FileType] = {
 _INVENTORY_DIR = Path(__file__).resolve().parent.parent / "storage"
 _INVENTORY_FILE = _INVENTORY_DIR / "inventory.json"
 
+_SYLLABUS_KEYWORDS: list[str] = [
+    "syllabus",
+    "programma",
+    "program",
+    "course outline",
+    "piano di studi",
+]
+
 
 def detect_file_type(path: Path) -> FileType:
     """Determine the ``FileType`` for a given filesystem path.
@@ -56,7 +64,47 @@ def detect_file_type(path: Path) -> FileType:
     return file_type
 
 
-def scan_directory(path: Path | str) -> list[Document]:
+def detect_syllabus_candidate(
+    document: Document,
+    *,
+    explicit_path: str | None = None,
+) -> bool:
+    """Check whether *document* looks like a course syllabus.
+
+    Heuristic (case-insensitive):
+
+    - Filename stem contains one of the known keywords, **or**
+    - *explicit_path* is set and matches the document's source path.
+
+    Parameters
+    ----------
+    document:
+        The document to evaluate.
+    explicit_path:
+        An explicit syllabus path from configuration.  When provided and it
+        matches ``document.source_path``, the function always returns *True*.
+
+    Returns
+    -------
+    bool
+    """
+    if explicit_path and Path(explicit_path) == Path(document.source_path):
+        return True
+
+    stem = Path(document.source_path).stem.lower()
+    for keyword in _SYLLABUS_KEYWORDS:
+        if keyword in stem:
+            return True
+
+    return False
+
+
+def scan_directory(
+    path: Path | str,
+    *,
+    syllabus_enabled: bool = False,
+    syllabus_path: str | None = None,
+) -> list[Document]:
     """Recursively scan *path* and return ``Document`` stubs for every
     supported file found.
 
@@ -64,6 +112,13 @@ def scan_directory(path: Path | str) -> list[Document]:
     ----------
     path:
         Root directory to scan.
+    syllabus_enabled:
+        When *True*, each document is tested for syllabus candidacy via
+        ``detect_syllabus_candidate`` and ``Document.is_syllabus`` is set
+        accordingly.
+    syllabus_path:
+        Explicit syllabus file path from configuration.  Passed through to
+        ``detect_syllabus_candidate``.
 
     Returns
     -------
@@ -88,6 +143,8 @@ def scan_directory(path: Path | str) -> list[Document]:
 
     documents: list[Document] = []
     skipped = 0
+    syllabus_found = False
+    syllabus_doc_id: str | None = None
 
     for entry in sorted(root.rglob("*")):
         if not entry.is_file():
@@ -103,6 +160,19 @@ def scan_directory(path: Path | str) -> list[Document]:
                 source_path=str(entry),
                 file_type=file_type,
             )
+
+            if syllabus_enabled:
+                is_syll = detect_syllabus_candidate(
+                    doc,
+                    explicit_path=syllabus_path,
+                )
+                if is_syll:
+                    doc.is_syllabus = True
+                    if not syllabus_found:
+                        syllabus_found = True
+                        syllabus_doc_id = doc.id
+                    logger.info("Syllabus candidate detected: %s", entry.name)
+
             documents.append(doc)
             logger.debug("Found: %s (%s)", entry.name, file_type.value)
         except OSError as exc:
@@ -114,6 +184,12 @@ def scan_directory(path: Path | str) -> list[Document]:
         len(documents),
         skipped,
     )
+
+    if syllabus_enabled:
+        logger.info("Syllabus detected: %s", syllabus_found)
+        if syllabus_found:
+            logger.info("Syllabus document id: %s", syllabus_doc_id)
+
     return documents
 
 
@@ -149,6 +225,19 @@ def generate_inventory(
         for doc in documents
     ]
 
-    out.write_text(json.dumps(inventory, indent=2, ensure_ascii=False), encoding="utf-8")
+    syllabus_docs = [doc for doc in documents if doc.is_syllabus]
+
+    out.write_text(
+        json.dumps(
+            {
+                "syllabus_detected": len(syllabus_docs) > 0,
+                "syllabus_document_id": syllabus_docs[0].id if syllabus_docs else None,
+                "documents": inventory,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     logger.info("Inventory written to %s (%d entries)", out, len(inventory))
     return out.resolve()

@@ -7,8 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from core.models import FileType
-from pipeline.scanner import detect_file_type, generate_inventory, scan_directory
+from core.models import Document, FileType
+from pipeline.scanner import (
+    detect_file_type,
+    detect_syllabus_candidate,
+    generate_inventory,
+    scan_directory,
+)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -133,16 +138,20 @@ class TestGenerateInventory:
         docs = scan_directory(tmp_path)
         out = generate_inventory(docs, output_path=tmp_path / "inv.json")
         data = json.loads(out.read_text(encoding="utf-8"))
-        assert len(data) == 1
-        assert data[0]["file_type"] == "docx"
-        assert "id" in data[0]
-        assert "title" in data[0]
-        assert "source_path" in data[0]
+        assert "documents" in data
+        assert len(data["documents"]) == 1
+        assert data["documents"][0]["file_type"] == "docx"
+        assert "id" in data["documents"][0]
+        assert "title" in data["documents"][0]
+        assert "source_path" in data["documents"][0]
+        assert data["syllabus_detected"] is False
+        assert data["syllabus_document_id"] is None
 
     def test_empty_inventory(self, tmp_path: Path) -> None:
         out = generate_inventory([], output_path=tmp_path / "inv.json")
         data = json.loads(out.read_text(encoding="utf-8"))
-        assert data == []
+        assert data["documents"] == []
+        assert data["syllabus_detected"] is False
 
     def test_creates_parent_dirs(self, tmp_path: Path) -> None:
         out = generate_inventory([], output_path=tmp_path / "sub" / "dir" / "inv.json")
@@ -151,3 +160,95 @@ class TestGenerateInventory:
     def test_returns_resolved_path(self, tmp_path: Path) -> None:
         out = generate_inventory([], output_path=tmp_path / "inv.json")
         assert out.is_absolute()
+
+
+# ── v3: detect_syllabus_candidate ───────────────────────────────────────────
+
+class TestDetectSyllabusCandidate:
+    def test_syllabus_keyword(self) -> None:
+        doc = Document(source_path="/data/course_syllabus.pdf")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_programma_keyword(self) -> None:
+        doc = Document(source_path="/data/programma_esame.docx")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_program_keyword(self) -> None:
+        doc = Document(source_path="/data/program.pdf")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_course_outline_keyword(self) -> None:
+        doc = Document(source_path="/data/course outline.pdf")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_piano_di_studi_keyword(self) -> None:
+        doc = Document(source_path="/data/piano di studi.pdf")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_case_insensitive(self) -> None:
+        doc = Document(source_path="/data/SYLLABUS_2024.pdf")
+        assert detect_syllabus_candidate(doc) is True
+
+    def test_no_keyword(self) -> None:
+        doc = Document(source_path="/data/lecture_notes.pdf")
+        assert detect_syllabus_candidate(doc) is False
+
+    def test_explicit_path_match(self) -> None:
+        doc = Document(source_path="/data/custom_name.pdf")
+        assert detect_syllabus_candidate(doc, explicit_path="/data/custom_name.pdf") is True
+
+    def test_explicit_path_no_match(self) -> None:
+        doc = Document(source_path="/data/other.pdf")
+        assert detect_syllabus_candidate(doc, explicit_path="/data/custom_name.pdf") is False
+
+
+# ── v3: scan_directory with syllabus detection ──────────────────────────────
+
+class TestScanDirectorySyllabus:
+    def test_syllabus_detected(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "syllabus.pdf")
+        _touch(tmp_path / "notes.pdf")
+        docs = scan_directory(tmp_path, syllabus_enabled=True)
+        syllabus_docs = [d for d in docs if d.is_syllabus]
+        assert len(syllabus_docs) == 1
+        assert "syllabus" in syllabus_docs[0].source_path.lower()
+
+    def test_syllabus_disabled(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "syllabus.pdf")
+        docs = scan_directory(tmp_path, syllabus_enabled=False)
+        assert all(not d.is_syllabus for d in docs)
+
+    def test_syllabus_default_disabled(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "syllabus.pdf")
+        docs = scan_directory(tmp_path)
+        assert all(not d.is_syllabus for d in docs)
+
+    def test_explicit_syllabus_path(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "custom_program.pdf")
+        _touch(tmp_path / "notes.pdf")
+        docs = scan_directory(
+            tmp_path,
+            syllabus_enabled=True,
+            syllabus_path=str(tmp_path / "custom_program.pdf"),
+        )
+        syllabus_docs = [d for d in docs if d.is_syllabus]
+        assert len(syllabus_docs) == 1
+
+    def test_inventory_includes_syllabus(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "syllabus.pdf")
+        _touch(tmp_path / "notes.pdf")
+        docs = scan_directory(tmp_path, syllabus_enabled=True)
+        out = generate_inventory(docs, output_path=tmp_path / "inv.json")
+        import json
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["syllabus_detected"] is True
+        assert data["syllabus_document_id"] is not None
+
+    def test_inventory_no_syllabus(self, tmp_path: Path) -> None:
+        _touch(tmp_path / "notes.pdf")
+        docs = scan_directory(tmp_path, syllabus_enabled=True)
+        out = generate_inventory(docs, output_path=tmp_path / "inv.json")
+        import json
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["syllabus_detected"] is False
+        assert data["syllabus_document_id"] is None
