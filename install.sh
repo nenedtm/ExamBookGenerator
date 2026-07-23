@@ -86,11 +86,11 @@ if command -v ollama &>/dev/null; then
         echo "  Ollama server is running."
 
         # Pull text model
-        if ! ollama list 2>/dev/null | grep -q "llama3"; then
-            echo "  Pulling llama3 (text model)..."
-            ollama pull llama3
+        if ! ollama list 2>/dev/null | grep -q "qwen3"; then
+            echo "  Pulling qwen3 (text model)..."
+            ollama pull qwen3
         else
-            echo "  llama3 already available."
+            echo "  qwen3 already available."
         fi
 
         # Pull vision model (optional)
@@ -108,7 +108,7 @@ if command -v ollama &>/dev/null; then
 else
     echo "  WARNING: Ollama not found."
     echo "  Install from: https://ollama.com"
-    echo "  Then run: ollama pull llama3"
+    echo "  Then run: ollama pull qwen3"
 fi
 
 # ── 5. Check Tesseract ──────────────────────────────────────────────────────

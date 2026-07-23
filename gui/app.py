@@ -44,15 +44,14 @@ from utils.config import ConfigManager
 logger = logging.getLogger(__name__)
 
 _OLLAMA_MODELS = [
-    "llama3",
-    "llama3.1",
-    "mistral",
-    "mixtral",
-    "codellama",
-    "phi3",
-    "gemma2",
-    "qwen2",
     "qwen3",
+    "llama3.1",
+    "qwen2.5",
+    "llama3",
+    "mistral",
+    "gemma2",
+    "phi3",
+    "codellama",
 ]
 
 
@@ -152,7 +151,7 @@ class ExamBookWindow(QMainWindow):
         self._model_combo = QComboBox()
         self._model_combo.setEditable(True)
         self._model_combo.addItems(_OLLAMA_MODELS)
-        self._model_combo.setCurrentText(ConfigManager().get("llm.model", "llama3"))
+        self._model_combo.setCurrentText(ConfigManager().get("llm.model", "qwen3"))
         form.addRow("LLM model:", self._model_combo)
 
         layout.addLayout(form)

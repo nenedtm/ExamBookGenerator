@@ -76,7 +76,7 @@ class OllamaClient:
     def __init__(
         self,
         host: str = "http://127.0.0.1:11434",
-        model: str = "llama3",
+        model: str = "qwen3",
         timeout: int = 120,
         max_retries: int = 3,
     ) -> None:
@@ -99,7 +99,7 @@ class OllamaClient:
             cfg = ConfigManager()
         return cls(
             host=cfg.get("llm.host", "http://127.0.0.1:11434"),
-            model=cfg.get("llm.model", "llama3"),
+            model=cfg.get("llm.model", "qwen3"),
             timeout=int(cfg.get("llm.timeout", 120)),
             max_retries=int(cfg.get("llm.max_retries", 3)),
         )

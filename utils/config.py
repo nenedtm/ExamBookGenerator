@@ -29,7 +29,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "llm": {
         "host": "http://127.0.0.1:11434",
-        "model": "llama3",
+        "model": "qwen3",
         "timeout": 120,
         "max_retries": 3,
     },
@@ -312,8 +312,8 @@ class ConfigManager:
 
         model = self.get("llm.model")
         if not model or not isinstance(model, str):
-            logger.warning("llm.model not set — defaulting to 'llama3'")
-            self.set("llm.model", "llama3")
+            logger.warning("llm.model not set — defaulting to 'qwen3'")
+            self.set("llm.model", "qwen3")
 
         timeout = self.get("llm.timeout")
         if not isinstance(timeout, (int, float)) or timeout <= 0:

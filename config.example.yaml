@@ -13,7 +13,7 @@ output:
 # Ollama connection
 llm:
   host: "http://127.0.0.1:11434"       # Ollama server address
-  model: "llama3"                       # text generation model
+  model: "qwen3"                        # text generation model
   timeout: 120                          # request timeout (seconds)
   max_retries: 3                        # retry count on LLM failure
 

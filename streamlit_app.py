@@ -27,15 +27,14 @@ st.set_page_config(
 # ── Constants ───────────────────────────────────────────────────────────────
 
 _OLLAMA_MODELS = [
-    "llama3",
-    "llama3.1",
-    "mistral",
-    "mixtral",
-    "codellama",
-    "phi3",
-    "gemma2",
-    "qwen2",
     "qwen3",
+    "llama3.1",
+    "qwen2.5",
+    "llama3",
+    "mistral",
+    "gemma2",
+    "phi3",
+    "codellama",
 ]
 
 _SYLLABUS_KEYWORDS = [
