@@ -2,19 +2,23 @@ import json
 import re
 
 
+_VALID_ESCAPES = set("\"\\/\bfnrtu")
+
+
 def sanitize_llm_json(text: str) -> str:
     """Fix invalid JSON escape sequences produced by LLMs.
 
     LLMs often emit backslash escapes like ``\\s``, ``\\c``, ``\\p`` inside
-    JSON strings.  These are not valid JSON escapes.  This function replaces
-    each invalid ``\\X`` with just ``X``, preserving the intended character.
+    JSON strings.  These are not valid JSON escapes.  This function removes
+    the backslash from each invalid ``\\X``, preserving valid ones.
     """
-    _INVALID_ESCAPE_RE = re.compile(r'\\(?!["\\\/bfnrtuu])')
-
     def _fix(m: re.Match) -> str:
-        return m.group(0)[1]
+        ch = m.group(1)
+        if ch in _VALID_ESCAPES:
+            return '\\' + ch
+        return ch
 
-    return _INVALID_ESCAPE_RE.sub(_fix, text)
+    return re.sub(r'\\(.)', _fix, text)
 
 
 def parse_llm_json(text: str, *, label: str = "LLM") -> dict:
