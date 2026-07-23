@@ -36,7 +36,7 @@ def parse_llm_json(text: str, *, label: str = "LLM") -> dict:
     text = sanitize_llm_json(text)
 
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
@@ -46,7 +46,7 @@ def parse_llm_json(text: str, *, label: str = "LLM") -> dict:
                 f"Raw (first 500 chars): {text[:500]!r}"
             )
         try:
-            return json.loads(text[start : end + 1])
+            return json.loads(text[start : end + 1], strict=False)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"{label} returned invalid JSON: {exc}.  "
