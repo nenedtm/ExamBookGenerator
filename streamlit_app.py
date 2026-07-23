@@ -35,6 +35,7 @@ _OLLAMA_MODELS = [
     "phi3",
     "gemma2",
     "qwen2",
+    "qwen3",
 ]
 
 _SYLLABUS_KEYWORDS = [
