@@ -14,30 +14,47 @@
 
 ## Overview
 
-**ExamBookGenerator** is a fully local, AI-powered system that turns a messy folder of academic material into a single, structured, English-language exam manual.
+**ExamBookGenerator** is a fully local, AI-powered system that turns a disorganized folder of academic material into a single, structured, English-language exam manual. Everything runs on your machine via [Ollama](https://ollama.com) — no data ever leaves your computer.
 
-Point it at a folder containing PDF books (including scanned), lecture notes, PowerPoint slides, DOCX documents, Markdown/TXT files, photos of whiteboards, duplicated files, and randomly organized subfolders — and it will:
+Point it at a folder (with any level of nesting) containing PDF books, lecture notes, PowerPoint slides, DOCX documents, or Markdown/TXT files — and it will:
 
-1. scan every file;
-2. extract text **and images**;
-3. normalize and deduplicate the content;
-4. split it into AI-compatible chunks;
-5. identify the academic topics it covers;
-6. build a logical manual structure;
-7. generate detailed, exam-focused chapters — reusing real images from your material where they help explain a concept;
-8. validate the result;
-9. merge everything into one Markdown file.
+1. **Scan** every file recursively, including nested subfolders;
+2. **Extract** text and embedded images from each document;
+3. **Deduplicate** content using exact hash matching and near-duplicate detection (92% similarity threshold);
+4. **Chunk** the text into AI-compatible segments with configurable overlap;
+5. **Identify** academic topics automatically — optionally guided by a course syllabus (*programma*);
+6. **Build** a logical manual structure with hierarchical chapters and sections;
+7. **Generate** detailed, exam-focused chapters — reusing real images from your material where the AI decides they help explain a concept;
+8. **Validate** the result with 9 automated quality checks (structure, language, duplicates, image references, TOC integrity, syllabus order);
+9. **Merge** everything into one clean Markdown file with table of contents and chapter numbering.
 
-**Output:**
+### Three ways to run it
+
+| Interface | Command | Best for |
+|---|---|---|
+| **CLI** | `python main.py --input ./material` | Scripting, CI, power users |
+| **Desktop GUI** | `python main.py` (no `--input`) | Visual workflow on your desktop |
+| **Web Demo** | `streamlit run streamlit_app.py` | Quick access from any browser |
+
+### Key features
+
+- **Full manual** or **single-topic focus** mode — generate everything or zoom into one subject
+- **Configurable detail level** (1–10) — from a minimal summary to an exhaustive reference
+- **Automatic syllabus detection** — finds your `programma` file and orders chapters to match your course
+- **Vision-powered image matching** — uses a local vision model to pick the most relevant images and place them in context
+- **Always English output** — regardless of the source material language
+
+**Output structure:**
 
 ```
 output/
-├── Exam_Manual.md
+├── Exam_Manual.md          # The final manual
+├── topics.json             # Detected topics
+├── outline.md              # Chapter structure
+├── validation.json         # Quality check results
 └── assets/
-    └── images/
+    └── images/             # Extracted and deduplicated images
 ```
-
-The manual is **always generated in English**, regardless of the language of the source material.
 
 ---
 
