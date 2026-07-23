@@ -139,6 +139,7 @@ class OllamaClient:
             "model": model or self._model,
             "prompt": prompt,
             "stream": False,
+            "think": False,
         }
         if system:
             body["system"] = system
@@ -170,6 +171,7 @@ class OllamaClient:
             "model": model or self._model,
             "messages": messages,
             "stream": False,
+            "think": False,
         }
         if options:
             body["options"] = options
