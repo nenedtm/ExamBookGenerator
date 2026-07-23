@@ -4,7 +4,7 @@ output:
 
 llm:
   host: "http://127.0.0.1:11434"
-  model: "llama3"
+  model: "qwen3:latest"
   timeout: 120
   max_retries: 3
 
