@@ -35,6 +35,7 @@ from llm.ollama_client import (
     VisionModelUnavailableError,
 )
 from llm.prompt_manager import build_image_caption_prompt, build_image_relevance_prompt
+from utils import parse_llm_json
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -284,26 +285,10 @@ def _parse_relevance_response(raw: str) -> dict | None:
     Returns a dict with ``"relevant"`` (bool) and ``"placement"`` (str | None),
     or *None* if parsing fails.
     """
-    text = raw.strip()
-
-    # Strip markdown fences
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
-
     try:
-        obj = json.loads(text)
-    except json.JSONDecodeError:
-        # Try to extract JSON from surrounding text
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            obj = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
+        obj = parse_llm_json(raw, label="Image matcher")
+    except ValueError:
+        return None
 
     if not isinstance(obj, dict):
         return None

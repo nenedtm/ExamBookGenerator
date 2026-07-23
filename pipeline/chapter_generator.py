@@ -25,7 +25,6 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
 from pathlib import Path
@@ -71,31 +70,12 @@ def _parse_chapter_response(raw: str) -> dict[str, object]:
 
     Raises ``ChapterGeneratorError`` on invalid / incomplete output.
     """
-    text = raw.strip()
-
-    # Strip markdown code fences
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
+    from utils import parse_llm_json
 
     try:
-        obj = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise ChapterGeneratorError(
-                "LLM returned unrecognisable chapter — could not extract "
-                f"JSON.  Raw (first 500 chars): {text[:500]!r}"
-            )
-        try:
-            obj = json.loads(text[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise ChapterGeneratorError(
-                f"LLM returned invalid JSON: {exc}.  "
-                f"Raw (first 500 chars): {text[:500]!r}"
-            ) from exc
+        obj = parse_llm_json(raw, label="Chapter generator")
+    except ValueError as exc:
+        raise ChapterGeneratorError(str(exc)) from exc
 
     if not isinstance(obj, dict):
         raise ChapterGeneratorError(f"Expected JSON object, got {type(obj)}")

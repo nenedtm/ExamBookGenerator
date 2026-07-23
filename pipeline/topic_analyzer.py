@@ -28,6 +28,7 @@ from typing import Literal
 from core.models import Chunk, Document, Topic
 from llm.ollama_client import OllamaClient, OllamaError
 from llm.prompt_manager import build_topic_prompt
+from utils import parse_llm_json
 from utils.config import ConfigManager
 from utils.logger import get_logger
 
@@ -54,33 +55,10 @@ def _parse_topics_response(raw: str) -> list[dict[str, object]]:
     Handles common LLM quirks (markdown fences, leading/trailing text)
     by attempting to extract the first JSON object from *raw*.
     """
-    text = raw.strip()
-
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
-
-    # Try direct parse first
     try:
-        obj = json.loads(text)
-    except json.JSONDecodeError:
-        # Attempt to extract JSON object from surrounding text
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise TopicAnalyzerError(
-                "LLM returned unrecognisable response — could not extract "
-                f"JSON.  Raw output (first 500 chars): {text[:500]!r}"
-            )
-        try:
-            obj = json.loads(text[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise TopicAnalyzerError(
-                f"LLM returned invalid JSON: {exc}.  "
-                f"Raw output (first 500 chars): {text[:500]!r}"
-            ) from exc
+        obj = parse_llm_json(raw, label="Topic analyzer")
+    except ValueError as exc:
+        raise TopicAnalyzerError(str(exc)) from exc
 
     topics = obj.get("topics")
     if not isinstance(topics, list):
