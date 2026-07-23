@@ -98,7 +98,7 @@ def load_template(path: str | Path) -> str:
     if not p.exists():
         raise TemplateNotFoundError(f"Template not found: {p}")
     try:
-        content = p.read_text(encoding="utf-8")
+        content = p.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise TemplateError(f"Cannot read template {p}: {exc}") from exc
 

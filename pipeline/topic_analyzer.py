@@ -278,7 +278,7 @@ class TopicAnalyzer:
             path = Path(syllabus_path)
             if path.is_file():
                 logger.info("Loading syllabus from config path: %s", path)
-                return path.read_text(encoding="utf-8")
+                return path.read_text(encoding="utf-8", errors="replace")
             logger.warning("Syllabus path configured but not found: %s", path)
 
         return None

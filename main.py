@@ -408,7 +408,7 @@ def run_pipeline(
 
     # ── 15. Validate ──────────────────────────────────────────────────
     _progress(8, "Running validation...")
-    manual_text = output_path.read_text(encoding="utf-8")
+    manual_text = output_path.read_text(encoding="utf-8", errors="replace")
     chapters_meta = [
         {"title": t.name, "order": i, "syllabus_position": getattr(t, "syllabus_position", None)}
         for i, t in enumerate(topics)

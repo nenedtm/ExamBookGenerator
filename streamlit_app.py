@@ -271,7 +271,7 @@ if generate:
         st.success(f"Manual generated: `{output_path}`")
 
         # Download button
-        manual_text = output_path.read_text(encoding="utf-8")
+        manual_text = output_path.read_text(encoding="utf-8", errors="replace")
         st.download_button(
             label="⬇️ Download Exam_Manual.md",
             data=manual_text,
