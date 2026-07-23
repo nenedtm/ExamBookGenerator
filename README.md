@@ -56,8 +56,14 @@ ollama pull llama3
 # 4. (Optional) Pull a vision model for image matching
 ollama pull llava
 
-# 5. Generate your manual
+# 5a. Launch the web demo (simplest)
+streamlit run streamlit_app.py
+
+# 5b. Or use the CLI
 python main.py --input ./StudyMaterial
+
+# 5c. Or launch the desktop GUI
+python main.py
 ```
 
 Or use the installation script:
@@ -113,7 +119,8 @@ brew install tesseract
 | python-pptx | PowerPoint slide parsing |
 | pytesseract | OCR for scanned documents |
 | tiktoken | Token counting for chunk splitting |
-| PySide6 | Graphical user interface |
+| PySide6 | Desktop graphical interface |
+| Streamlit | Web-based demo interface |
 
 ---
 
@@ -148,7 +155,14 @@ python main.py --input ./StudyMaterial --output ./my_output/
 python main.py
 ```
 
-The GUI provides all the same options as the CLI through visual controls: folder pickers, sliders, checkboxes, and a progress bar with live log output.
+### Streamlit Web Demo (simplest)
+
+```bash
+# Launch the web interface in your browser
+streamlit run streamlit_app.py
+```
+
+Opens `http://localhost:8501` with a visual interface — no desktop app needed.
 
 ### All CLI flags
 
@@ -393,7 +407,7 @@ The length is **never fixed** — it scales with the number of topics, subtopics
 ```
                          USER
                           │
-                     CLI  /  GUI
+                  CLI  /  GUI  /  Web
                           │
                    Main Controller
                           │
@@ -422,6 +436,7 @@ Input folder
 ```
 ExamBookGenerator/
 ├── main.py                 # CLI entry point & pipeline orchestrator
+├── streamlit_app.py        # Streamlit web demo
 ├── config.yaml             # default configuration
 ├── config.example.yaml     # documented example configuration
 ├── template.md             # chapter template
