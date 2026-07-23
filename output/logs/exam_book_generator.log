@@ -1,0 +1,23 @@
+2026-07-23 10:44:49 | INFO     | utils.logger | Logging initialised — log file: /home/nene/Documenti/exam book generator/output/logs/exam_book_generator.log
+2026-07-23 10:44:49 | INFO     | utils.config | Loading configuration from /home/nene/Documenti/exam book generator/config.yaml
+2026-07-23 10:44:49 | INFO     | __main__ | ExamBookGenerator started
+2026-07-23 10:44:49 | INFO     | __main__ | Config loaded — depth_level=5, language=en, output=Exam_Manual.md
+2026-07-23 10:44:49 | INFO     | __main__ | System ready. Press Ctrl+C to exit.
+2026-07-23 10:51:10 | INFO     | utils.logger | Logging initialised — log file: /home/nene/Documenti/exam book generator/output/logs/exam_book_generator.log
+2026-07-23 10:51:10 | INFO     | utils.config | Loading configuration from /home/nene/Documenti/exam book generator/config.yaml
+2026-07-23 10:51:10 | WARNING  | utils.config | Ollama model 'llava' not found locally — vision features will be disabled (fallback: images skipped). Pull it with: ollama pull llava
+2026-07-23 10:51:10 | INFO     | __main__ | ExamBookGenerator started
+2026-07-23 10:51:10 | INFO     | __main__ | Config loaded — depth_level=5, language=en, output=Exam_Manual.md
+2026-07-23 10:51:10 | INFO     | __main__ | System ready. Press Ctrl+C to exit.
+2026-07-23 10:54:10 | INFO     | utils.logger | Logging initialised — level=INFO, file=/home/nene/Documenti/exam book generator/output/logs/exam_book_generator.log
+2026-07-23 10:54:10 | INFO     | utils.config | Loading configuration from /home/nene/Documenti/exam book generator/config.yaml
+2026-07-23 10:54:10 | WARNING  | utils.config | Ollama model 'llava' not found locally — vision features will be disabled (fallback: images skipped). Pull it with: ollama pull llava
+2026-07-23 10:54:10 | INFO     | __main__ | ExamBookGenerator started
+2026-07-23 10:54:10 | INFO     | __main__ | Config loaded — depth_level=5, language=en, output=Exam_Manual.md
+2026-07-23 10:54:10 | INFO     | __main__ | System ready. Press Ctrl+C to exit.
+2026-07-23 10:55:17 | INFO     | utils.logger | Logging initialised — level=INFO, file=/home/nene/Documenti/exam book generator/output/logs/exam_book_generator.log
+2026-07-23 10:55:17 | INFO     | utils.config | Loading configuration from /home/nene/Documenti/exam book generator/config.yaml
+2026-07-23 10:55:17 | WARNING  | utils.config | Ollama model 'llava' not found locally — vision features will be disabled (fallback: images skipped). Pull it with: ollama pull llava
+2026-07-23 10:55:17 | INFO     | __main__ | ExamBookGenerator started
+2026-07-23 10:55:17 | INFO     | __main__ | Config loaded — depth_level=5, language=en, output=Exam_Manual.md
+2026-07-23 10:55:17 | INFO     | __main__ | System ready. Press Ctrl+C to exit.

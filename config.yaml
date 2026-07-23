@@ -1,0 +1,17 @@
+output:
+  language: "en"
+  filename: "Exam_Manual.md"
+
+generation:
+  depth_level: 5
+  length_mode: "topic_driven"
+
+images:
+  extract: true
+  match_to_chapters: true
+  vision_model: "llava"
+  assets_dir: "output/assets/images"
+
+logging:
+  level: "INFO"
+  file: "output/logs/exam_book_generator.log"
