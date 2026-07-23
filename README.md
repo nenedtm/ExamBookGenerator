@@ -1,31 +1,22 @@
 # ExamBookGenerator
 
-### Local AI-powered academic material transformation system
+**Local AI-powered academic material transformation system**
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 ![AI](https://img.shields.io/badge/AI-Ollama-green)
 ![Offline](https://img.shields.io/badge/Execution-Local-success)
 ![Markdown](https://img.shields.io/badge/Output-Markdown-orange)
 ![Multimodal](https://img.shields.io/badge/AI-Vision-purple)
-![Status](https://img.shields.io/badge/Status-In%20Development-yellow)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+![Tests](https://img.shields.io/badge/Tests-644_passing-brightgreen)
 
 ---
 
 ## Overview
 
-**ExamBookGenerator** is a fully local, AI-powered document processing system that turns a messy folder of academic material into a single, structured, customizable exam manual.
+**ExamBookGenerator** is a fully local, AI-powered system that turns a messy folder of academic material into a single, structured, English-language exam manual.
 
-Point it at a folder containing:
-
-- PDF books (including scanned PDFs)
-- lecture notes
-- PowerPoint slides
-- DOCX documents
-- Markdown / TXT files
-- photos of whiteboards
-- duplicated files and randomly organized subfolders
-
-and it will:
+Point it at a folder containing PDF books (including scanned), lecture notes, PowerPoint slides, DOCX documents, Markdown/TXT files, photos of whiteboards, duplicated files, and randomly organized subfolders — and it will:
 
 1. scan every file;
 2. extract text **and images**;
@@ -35,7 +26,7 @@ and it will:
 6. build a logical manual structure;
 7. generate detailed, exam-focused chapters — reusing real images from your material where they help explain a concept;
 8. validate the result;
-9. merge everything into one file.
+9. merge everything into one Markdown file.
 
 **Output:**
 
@@ -50,70 +41,350 @@ The manual is **always generated in English**, regardless of the language of the
 
 ---
 
-## Why not just "summarize it"?
+## Quick Start
 
-The goal isn't a summary — it's a **generated textbook** built from your own material. There is no artificial page limit and no fixed word target: the manual's length and depth are a direct function of what you feed it and how you configure it.
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
 
-| Input | Result |
-|---|---|
-| A single topic, 5 chunks of material | A short chapter |
-| A full course, 120 chunks across dozens of topics | A large, detailed textbook |
+# 2. Make sure Ollama is running
+ollama serve
+
+# 3. Pull a text model (required)
+ollama pull llama3
+
+# 4. (Optional) Pull a vision model for image matching
+ollama pull llava
+
+# 5. Generate your manual
+python main.py --input ./StudyMaterial
+```
+
+Or use the installation script:
+
+```bash
+bash install.sh
+```
 
 ---
 
-## Key Features
+## Installation
 
-### 🔒 Fully local — no cloud APIs
+### Requirements
 
-Everything runs through [Ollama](https://ollama.com). No data leaves your machine.
+- **Python 3.12+**
+- **[Ollama](https://ollama.com)** installed and running locally
+- **Tesseract OCR** (only needed for scanned PDFs / image text extraction)
 
-Suggested models:
+### Install Python dependencies
 
-- **Text:** Qwen, Llama, Mistral (or any Ollama-compatible chat model)
-- **Vision:** Llava (or any Ollama-compatible multimodal model)
-
-### 📏 Dynamic, topic-driven length
-
-The final length is **not** a fixed target ("write 200 pages"). It scales automatically with:
-
-```
-number of topics + number of subtopics + amount of source material + depth_level
+```bash
+pip install -r requirements.txt
 ```
 
-More topics → a longer manual. A short exam and a full university course never look the same size.
+### Install Ollama models
 
-### 🎚️ Configurable depth level (1–10)
+```bash
+# Text model (required)
+ollama pull llama3
 
-A single `depth_level` parameter controls how much detail every chapter gets — **without ever skipping topics**, even at the lowest setting:
+# Vision model (optional — enables image matching)
+ollama pull llava
+```
 
-| Level | Style |
+### System dependencies (if needed)
+
+```bash
+# Ubuntu / Debian
+sudo apt install tesseract-ocr
+
+# macOS
+brew install tesseract
+```
+
+### What gets installed
+
+| Package | Purpose |
 |---|---|
-| 1–2 | Minimal but complete summary — every topic covered, briefly |
-| 3–5 | Balanced academic explanation, with examples |
-| 6–8 | Detailed textbook style: mechanisms, derivations, exam-focused notes |
-| 9–10 | Exhaustive: edge cases, formulas, exceptions, every relevant detail |
+| PyYAML | Configuration file parsing |
+| Pillow | Image processing |
+| PyMuPDF | PDF parsing and image extraction |
+| python-docx | DOCX document parsing |
+| python-pptx | PowerPoint slide parsing |
+| pytesseract | OCR for scanned documents |
+| tiktoken | Token counting for chunk splitting |
+| PySide6 | Graphical user interface |
 
-### 🖼️ Real images, never generated ones
+---
 
-The system extracts images actually embedded in your PDFs, DOCX files, and PPTX slides (diagrams, graphs, whiteboard photos, slide screenshots) and, using a local vision model, decides — per chapter — whether one of them is worth inserting and where.
+## Usage
 
-**It never fabricates new images.** If nothing relevant exists in your material, no image is added.
+### CLI
+
+```bash
+# Basic — scan a folder, generate full manual
+python main.py --input ./StudyMaterial
+
+# Set detail level (1=minimal, 10=exhaustive)
+python main.py --input ./StudyMaterial --depth 8
+
+# Disable image extraction/matching
+python main.py --input ./StudyMaterial --no-images
+
+# Override the LLM model
+python main.py --input ./StudyMaterial --model mistral
+
+# Use a custom template
+python main.py --input ./StudyMaterial --template my_template.md
+
+# Specify output directory
+python main.py --input ./StudyMaterial --output ./my_output/
+```
+
+### GUI
+
+```bash
+# Launch the graphical interface (omit --input)
+python main.py
+```
+
+The GUI provides all the same options as the CLI through visual controls: folder pickers, sliders, checkboxes, and a progress bar with live log output.
+
+### All CLI flags
+
+| Flag | Description | Default |
+|---|---|---|
+| `--input DIR` | Source material directory. If omitted, the GUI launches. | — |
+| `--template FILE` | Markdown template file | `template.md` |
+| `--model NAME` | Override the LLM model from config | config value |
+| `--output DIR` | Output directory | `output/` |
+| `--depth N` | Detail level 1–10 | config value (5) |
+| `--no-images` | Disable image extraction and matching | off |
+| `--syllabus FILE` | Explicit syllabus path (bypasses auto-detection) | auto |
+| `--scope {full,topic}` | Full manual or single-topic focus | `full` |
+| `--topic NAME` | Focus topic name (required with `--scope topic`) | — |
+| `--focus-depth N` | Detail level for topic-focus mode | `--depth` value |
+| `--no-interactive` | Disable interactive prompts (for scripts/CI) | off |
+
+---
+
+## Course Syllabus
+
+The system supports an optional **course syllabus** (also called *programma*) that tells it which topics exist in your course and in what order they should appear.
+
+### How it works
+
+When a syllabus is provided (or auto-detected), the system:
+
+1. Uses it to determine the **topic list** for the manual.
+2. Orders chapters in the **same sequence** as the syllabus.
+3. If a topic in the syllabus has no matching material, it is still included but marked as under-sourced.
+
+### Providing a syllabus
+
+**Option 1 — Manual file path (CLI):**
+
+```bash
+python main.py --input ./StudyMaterial --syllabus ./programma.txt
+```
+
+**Option 2 — Manual file path (GUI):**
+
+Use the "Course syllabus" file picker in the GUI.
+
+**Option 3 — Automatic detection:**
+
+If you don't provide a syllabus, the system scans your folder for files whose name contains one of:
+
+- `syllabus`
+- `programma`
+- `program`
+- `course outline`
+- `piano di studi`
+
+When using the CLI with interactive prompts, it will ask:
 
 ```
-Source documents
-       │
-       ▼
-Image extraction & deduplication
-       │
-       ▼
-Vision-model description
-       │
-       ▼
-Relevance check per chapter
-       │
-       ▼
-Inserted into the right chapter (or skipped)
+Do you have a course syllabus / programma?
+If yes, enter the file path.  Press Enter to skip.
 ```
+
+When using the GUI, a green label appears: *"Detected: programma.pdf — use this?"*
+
+### What happens without a syllabus
+
+The system still works. It discovers topics from the material itself using the LLM and orders them by pedagogical logic (foundational concepts first).
+
+### Configuration
+
+```yaml
+syllabus:
+  enabled: "auto"    # "auto" | true | false
+  path: null         # explicit file path, or null for auto-detection
+```
+
+| Value | Behavior |
+|---|---|
+| `"auto"` | Scans folder for syllabus keywords; asks if not found |
+| `true` | Requires `path` to be set; skips auto-detection |
+| `false` | Syllabus feature entirely disabled |
+
+---
+
+## Single-Topic Focus Mode
+
+By default the system generates a **full manual** covering every topic found in your material. With focus mode you can generate a dedicated file for a **single topic** at a potentially different detail level.
+
+### CLI
+
+```bash
+# Generate a focused chapter on "Linear Algebra" at maximum detail
+python main.py --input ./StudyMaterial \
+    --scope topic \
+    --topic "Linear Algebra" \
+    --focus-depth 10
+
+# Focus mode without images
+python main.py --input ./StudyMaterial \
+    --scope topic \
+    --topic "Organic Chemistry" \
+    --focus-depth 6 \
+    --no-images
+```
+
+### GUI
+
+1. Select **"Focus on a specific topic"** radio button.
+2. Type the topic name in the **Topic** field.
+3. Adjust the **Focus depth level** slider (independent from the global depth slider).
+4. Click **Generate Manual**.
+
+### How it differs from full mode
+
+| Aspect | Full mode | Topic mode |
+|---|---|---|
+| Topics covered | All detected topics | Only the named topic |
+| Chapters | One per topic | Single chapter |
+| Depth slider | Global depth level | Separate focus-depth slider |
+| Output file | `Exam_Manual.md` | `Exam_Manual_<topic-slug>.md` |
+| Material scope | All chunks | Only chunks relevant to the topic |
+| Syllabus order | Respected | Ignored (manual order) |
+
+### Configuration
+
+```yaml
+generation:
+  scope: "full"           # "full" | "topic"
+  focus_topic: null       # topic name string, or null
+  focus_depth_level: null # 1-10, or null (falls back to depth_level)
+```
+
+---
+
+## Table of Contents
+
+The manual can optionally include a **table of contents** at the top, generated automatically from the chapter structure.
+
+### Toggle via configuration
+
+```yaml
+structure:
+  include_toc: true    # true = include, false = omit
+```
+
+### CLI
+
+There is no direct CLI flag for the TOC toggle. Edit `config.yaml` or use the **"Include table of contents"** checkbox in the GUI.
+
+### What it looks like
+
+When enabled (`true`), the manual starts with:
+
+```markdown
+# My Exam Manual
+
+## Table of Contents
+
+1. [Linear Algebra](#linear-algebra)
+2. [Calculus](#calculus)
+3. [Probability Theory](#probability-theory)
+...
+
+---
+
+## Linear Algebra
+...
+```
+
+When disabled (`false`), the TOC section is omitted entirely and the manual starts directly with the first chapter.
+
+---
+
+## Configuration
+
+The main configuration file is `config.yaml` at the project root. All settings have sensible defaults.
+
+```yaml
+output:
+  language: "en"                        # manual language (always English)
+  filename: "Exam_Manual.md"            # output filename
+
+llm:
+  host: "http://127.0.0.1:11434"       # Ollama server address
+  model: "llama3"                       # text model name
+  timeout: 120                          # request timeout in seconds
+  max_retries: 3                        # retry count on failure
+
+structure:
+  include_toc: true                     # include table of contents
+
+syllabus:
+  enabled: "auto"                       # "auto" | true | false
+  path: null                            # explicit syllabus path
+
+generation:
+  depth_level: 5                        # 1-10 detail level
+  length_mode: "topic_driven"           # length scales with topics
+  scope: "full"                         # "full" | "topic"
+  focus_topic: null                     # topic name for focus mode
+  focus_depth_level: null               # 1-10 for focus mode
+
+images:
+  extract: true                         # extract images from documents
+  match_to_chapters: true               # match images to chapters via vision
+  vision_model: "llava"                 # Ollama vision model
+  assets_dir: "output/assets/images"    # image storage directory
+  min_width: 100                        # minimum image width (px)
+  min_height: 100                       # minimum image height (px)
+
+logging:
+  level: "INFO"                         # DEBUG | INFO | WARNING | ERROR
+  file: "output/logs/exam_book_generator.log"
+```
+
+### Recommended models
+
+| Purpose | Model | Pull command |
+|---|---|---|
+| Text generation | llama3 | `ollama pull llama3` |
+| Text generation | mistral | `ollama pull mistral` |
+| Text generation | qwen3 | `ollama pull qwen3` |
+| Vision / image matching | llava | `ollama pull llava` |
+
+---
+
+## Depth Level Guide
+
+The `depth_level` parameter (1–10) controls how much detail every chapter gets **without ever skipping topics**:
+
+| Level | Style | Use case |
+|---|---|---|
+| 1–2 | Minimal but complete summary | Quick overview, last-minute review |
+| 3–5 | Balanced academic explanation | General exam preparation |
+| 6–8 | Detailed textbook style | Thorough exam preparation |
+| 9–10 | Exhaustive with edge cases | Deep study, thesis preparation |
+
+The length is **never fixed** — it scales with the number of topics, subtopics, and available source material.
 
 ---
 
@@ -131,184 +402,162 @@ Inserted into the right chapter (or skipped)
    Parsers       Pipeline       LLM Layer      Storage
 ```
 
-### Pipeline
+### Pipeline (8 steps)
 
 ```
-Input folder → Scanner → Parsers (+ image extraction) → Normalization
-   → Deduplication → Chunking → Topic analysis → Outline generation
-   → Template → Image matching → Chapter generation → Validation
-   → Final merge → Exam_Manual.md
+Input folder
+  → 1. Scan (detect files + syllabus)
+  → 2. Parse (PDF / DOCX / PPTX / TXT + image extraction)
+  → 3. Deduplicate
+  → 4. Chunk (AI-compatible segments)
+  → 5. Topic analysis (LLM-powered)
+  → 6. Outline generation (structure + index)
+  → 7. Chapter generation (LLM + image matching)
+  → 8. Merge → Final manual
+  → 9. Validate (9 automated checks)
 ```
 
 ### Repository structure
 
 ```
 ExamBookGenerator/
-├── main.py
-├── config.yaml
-├── template.md
-├── requirements.txt
+├── main.py                 # CLI entry point & pipeline orchestrator
+├── config.yaml             # default configuration
+├── config.example.yaml     # documented example configuration
+├── template.md             # chapter template
+├── requirements.txt        # Python dependencies
+├── install.sh              # one-command installation script
 │
 ├── core/
-│   └── models.py              # Document, Chunk, Topic, Chapter, ExtractedImage
+│   └── models.py           # Document, Chunk, Topic, ExtractedImage
 │
 ├── parsers/
-│   ├── pdf_parser.py
-│   ├── docx_parser.py
-│   ├── pptx_parser.py
-│   ├── text_parser.py
-│   └── ocr_parser.py
+│   ├── pdf_parser.py       # PyMuPDF + OCR fallback
+│   ├── docx_parser.py      # python-docx
+│   ├── pptx_parser.py      # python-pptx
+│   └── ocr_parser.py       # Tesseract OCR wrapper
 │
 ├── pipeline/
-│   ├── scanner.py
-│   ├── image_extractor.py     # [v2] shared image extraction/dedup
-│   ├── normalizer.py
-│   ├── deduplicator.py
-│   ├── chunker.py
-│   ├── topic_analyzer.py
-│   ├── outline_generator.py
-│   ├── template_engine.py
-│   ├── image_matcher.py       # [v2] vision-based image placement
-│   ├── chapter_generator.py
-│   ├── validator.py
-│   └── merge.py
+│   ├── scanner.py          # filesystem scanner + syllabus detection
+│   ├── image_extractor.py  # image extraction & deduplication
+│   ├── normalizer.py       # document normalization
+│   ├── deduplicator.py     # content deduplication
+│   ├── chunker.py          # AI-compatible chunking
+│   ├── topic_analyzer.py   # LLM-powered topic discovery
+│   ├── outline_generator.py # manual structure + index entries
+│   ├── template_engine.py  # template loading & variable substitution
+│   ├── image_matcher.py    # vision-based image placement
+│   ├── chapter_generator.py # per-topic chapter generation
+│   ├── validator.py        # 9 automated quality checks
+│   └── merge.py            # final assembler (full / topic modes)
 │
 ├── llm/
-│   ├── ollama_client.py       # text + vision (generate_with_image)
-│   └── prompt_manager.py
+│   ├── ollama_client.py    # Ollama HTTP client (text + vision)
+│   └── prompt_manager.py   # centralized prompt builders
 │
 ├── storage/
-│   ├── database.py
-│   └── cache.py
+│   ├── database.py         # SQLite document tracking
+│   └── cache.py            # content-hash caching
 │
 ├── utils/
-│   ├── logger.py
-│   └── config.py
+│   ├── config.py           # ConfigManager (typed YAML access)
+│   └── logger.py           # structured logging
 │
 ├── gui/
-│   └── app.py
+│   └── app.py              # PySide6 graphical interface
 │
-├── tests/
-└── output/
+└── tests/                  # 644 tests
 ```
 
 ---
 
-## Core data models
+## Supported Input Formats
 
-| Model | Purpose |
+| Format | Text extraction | Image extraction |
+|---|---|---|
+| PDF (text-based) | PyMuPDF | PyMuPDF |
+| PDF (scanned) | Tesseract OCR | Embedded images |
+| DOCX | python-docx | Embedded images |
+| PPTX | python-pptx | Embedded images |
+| TXT / Markdown | Direct read | — |
+| PNG / JPG / TIFF | — (standalone images) | — |
+
+---
+
+## Output Validation
+
+After generation the system runs **9 automated checks** and writes a `validation.json` summary:
+
+| Check | What it verifies |
 |---|---|
-| `Document` | A parsed source file: metadata, extracted text, linked images |
-| `Chunk` | An AI-compatible text section (books don't fit in one prompt) |
-| `Topic` | An academic concept: title, description, sources, subtopic count |
-| `Chapter` | A generated manual chapter: title, Markdown content, order, images |
-| `ExtractedImage` | A real image pulled from the source material, with its AI-generated description |
+| Markdown structure | Valid headings, no broken syntax |
+| Language | Output is in English |
+| Empty chapters | No chapter is empty or too short |
+| Duplicate content | No repeated paragraphs |
+| Image references | All `![...]()` links point to existing files |
+| TOC structure | Table of contents anchors match headings |
+| Topic focus | Topic-mode output covers the named topic |
+| Syllabus order | Chapters follow syllabus sequence (if provided) |
+| Index entries | All `IndexEntry` anchors are unique and valid |
 
 ---
 
-## Supported input formats
+## Troubleshooting
 
-| Format | Support |
-|---|---|
-| PDF (incl. scanned) | ✅ |
-| DOCX | ✅ |
-| PPTX | ✅ |
-| TXT / Markdown | ✅ |
-| PNG / JPG | ✅ |
+### "Ollama model 'X' not found locally"
 
----
-
-## Configuration
-
-`config.yaml`:
-
-```yaml
-output:
-  language: "en"                    # the manual is always generated in English
-  filename: "Exam_Manual.md"
-
-generation:
-  depth_level: 5                    # 1-10: 1 = minimal summary, 10 = maximum detail
-  length_mode: "topic_driven"       # length always scales with topics, never fixed
-
-images:
-  extract: true
-  match_to_chapters: true
-  vision_model: "llava"
-  assets_dir: "output/assets/images"
-```
-
----
-
-## Installation
-
-Requirements: **Python 3.12+** and [Ollama](https://ollama.com) installed locally.
+The configured model hasn't been pulled yet:
 
 ```bash
-pip install -r requirements.txt
+ollama pull llama3
+```
 
-# text model
-ollama pull qwen3
+### "No supported files found"
 
-# vision model (optional — required only for image matching)
+Your folder contains only unsupported file types. The system recognizes: PDF, DOCX, PPTX, TXT, MD, PNG, JPG, TIFF, GIF, BMP, WEBP, SVG.
+
+### "No text content could be extracted"
+
+All documents are image-only or corrupted. Try running Tesseract OCR separately to verify, or add text-based documents.
+
+### Vision features disabled
+
+The `llava` model isn't pulled. This only affects image matching — the manual is still generated:
+
+```bash
 ollama pull llava
 ```
 
+### Slow generation
+
+Generation time depends on hardware, model size, and material volume. On a modern machine:
+
+| Source | Approximate time |
+|---|---|
+| 100 pages | a few minutes |
+| 500 pages | tens of minutes |
+| 1000+ pages | up to an hour |
+
 ---
 
-## Usage
+## Testing
 
 ```bash
-# basic run
-python main.py --input ./StudyMaterial
+# Run all 644 tests
+python -m pytest
 
-# custom depth level
-python main.py --input ./StudyMaterial --depth 9
+# Run with verbose output
+python -m pytest -v
 
-# disable image extraction/matching for this run
-python main.py --input ./StudyMaterial --no-images
+# Run a specific test file
+python -m pytest tests/test_gui.py -v
 ```
 
 ---
 
-## Performance
+## License
 
-Optimized for large, messy datasets via SQLite caching, document hashing, and incremental, chunk-based generation.
-
-| Source size | Rough time |
-|---|---|
-| 100 pages | minutes |
-| 500 pages | tens of minutes |
-| 1000+ pages | hours, depending on hardware and model |
-
----
-
-## Development approach
-
-This project is built incrementally through **28 independent, self-contained development prompts** — one per module — so that each one can be handed to a fresh LLM chat with zero prior context and still produce correct, integration-ready code. The step order follows real module dependencies (no step ever needs a file produced by a later step), so following them 1 → 28 in order yields the complete, working project.
-
-| Phase | Steps |
-|---|---|
-| Foundation | 1–4 |
-| Document processing & image extraction | 5–11 |
-| Data pipeline | 12–15 |
-| AI core (Ollama client, prompts, topics, outline) | 16–19 |
-| Content & image assembly | 20–24 |
-| User interface | 25–26 |
-| Testing & packaging | 27–28 |
-
-The full prompt series lives in [`ExamBookGenerator___Serie_Completa_di_Prompt_Indipendenti.md`](./ExamBookGenerator___Serie_Completa_di_Prompt_Indipendenti.md).
-
----
-
-## Roadmap / possible extensions
-
-- Automatic flashcards and quizzes
-- Spaced-repetition integration
-- PDF export of the final manual
-- Web interface
-- Semantic search over your own material
-- Voice lecture transcription
+MIT License — see [LICENSE](./LICENSE).
 
 ---
 

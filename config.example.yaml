@@ -1,0 +1,49 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ExamBookGenerator — Example configuration
+#
+# Copy this file to config.yaml and edit as needed.
+# All values shown here are the defaults.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Output settings
+output:
+  language: "en"                        # manual language (always English)
+  filename: "Exam_Manual.md"            # output filename
+
+# Ollama connection
+llm:
+  host: "http://127.0.0.1:11434"       # Ollama server address
+  model: "llama3"                       # text generation model
+  timeout: 120                          # request timeout (seconds)
+  max_retries: 3                        # retry count on LLM failure
+
+# Manual structure
+structure:
+  include_toc: true                     # include table of contents at the top
+
+# Syllabus (optional — helps order chapters correctly)
+syllabus:
+  enabled: "auto"                       # "auto" | true | false
+  path: null                            # explicit file path (required if enabled: true)
+
+# Generation parameters
+generation:
+  depth_level: 5                        # 1-10: 1 = minimal summary, 10 = exhaustive
+  length_mode: "topic_driven"           # length scales with topics, never fixed
+  scope: "full"                         # "full" | "topic"
+  focus_topic: null                     # topic name (required if scope: "topic")
+  focus_depth_level: null               # 1-10 (falls back to depth_level if null)
+
+# Image handling
+images:
+  extract: true                         # extract images from PDF/DOCX/PPTX
+  match_to_chapters: true               # use vision model to match images to chapters
+  vision_model: "llava"                 # Ollama vision model (set null to disable)
+  assets_dir: "output/assets/images"    # where extracted images are stored
+  min_width: 100                        # ignore images smaller than this (px)
+  min_height: 100                       # ignore images smaller than this (px)
+
+# Logging
+logging:
+  level: "INFO"                         # DEBUG | INFO | WARNING | ERROR
+  file: "output/logs/exam_book_generator.log"

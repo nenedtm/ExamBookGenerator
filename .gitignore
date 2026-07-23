@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output (generated)
+output/
+
+# Storage (runtime data)
+storage/*.db
+storage/inventory.json
+
+# Logs
+*.log
+
+# Pytest
+.pytest_cache/
+
+# Config (user-specific — use config.example.yaml as reference)
+config.yaml
