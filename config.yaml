@@ -5,8 +5,8 @@ output:
 llm:
   host: "http://127.0.0.1:11434"
   model: "qwen3:latest"
-  timeout: 600
-  max_retries: 3
+  timeout: 2700
+  max_retries: 2
 
 structure:
   include_toc: true
