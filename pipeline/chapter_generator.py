@@ -305,11 +305,24 @@ def generate_chapter(
         "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks, num_predict=%d)",
         topic.name, scope, depth_level, len(chunks), num_predict,
     )
-    raw_response = client.generate(
-        prompt,
-        options={"num_predict": num_predict},
-    )
-    parsed = _parse_chapter_response(raw_response)
+    for attempt in range(3):
+        raw_response = client.generate(
+            prompt,
+            options={"num_predict": num_predict},
+        )
+        try:
+            parsed = _parse_chapter_response(raw_response)
+            break
+        except ChapterGeneratorError:
+            if attempt < 2:
+                num_predict = int(num_predict * 1.5)
+                logger.warning(
+                    "Chapter JSON parse failed for '%s' (attempt %d), "
+                    "retrying with num_predict=%d",
+                    topic.name, attempt + 1, num_predict,
+                )
+            else:
+                raise
 
     title = str(parsed["title"]).strip()
     content = str(parsed["content"]).strip()

@@ -432,3 +432,45 @@ def build_image_relevance_prompt(
         '"placement" (string or null).\n'
         "Output ONLY the JSON object, no markdown fences, no commentary."
     )
+
+
+def build_syllabus_extraction_prompt(syllabus_text: str) -> str:
+    """Build a prompt that extracts a structured topic list from syllabus prose.
+
+    The syllabus may be a bullet-point list, a numbered outline, or a
+    free-form prose description of the course content.  This prompt
+    asks the LLM to extract every distinct teachable topic in the order
+    it appears in the text.
+
+    Parameters
+    ----------
+    syllabus_text:
+        The raw text of the syllabus / programma document.
+
+    Returns
+    -------
+    str
+        The full prompt string.
+    """
+    return (
+        "You are an academic planner.  The text below is a course "
+        "syllabus (programma).  It may be a structured list, a numbered "
+        "outline, or a free-form prose description of everything covered "
+        "in the course.\n\n"
+        f"{_ALWAYS_ENGLISH}\n\n"
+        "Your task: extract every distinct teachable topic from this "
+        "syllabus.  A topic is a self-contained subject that could "
+        "occupy one chapter in a study manual.\n\n"
+        "Rules:\n"
+        "- Preserve the original order from the syllabus.\n"
+        "- If a paragraph describes multiple sub-topics, split them into "
+        "separate entries.\n"
+        "- Do NOT merge distinct topics into one entry.\n"
+        "- Do NOT omit any topic, no matter how briefly mentioned.\n"
+        "- Each entry should be a short topic name (2-8 words).\n\n"
+        "Syllabus text:\n\n"
+        f"---\n{syllabus_text}\n---\n\n"
+        "Return a JSON object with the key \"topics\" containing a list "
+        "of strings, each being one topic name.\n\n"
+        "Output ONLY the JSON object, no markdown fences, no commentary."
+    )

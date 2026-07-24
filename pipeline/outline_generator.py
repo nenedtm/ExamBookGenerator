@@ -240,11 +240,25 @@ class OutlineGenerator:
             len(topics),
             scope,
         )
-        raw_response = self._client.generate(
-            prompt,
-            options={"num_predict": 8192},
-        )
-        raw_chapters = _parse_outline_response(raw_response)
+        num_predict = 8192
+        for attempt in range(3):
+            raw_response = self._client.generate(
+                prompt,
+                options={"num_predict": num_predict},
+            )
+            try:
+                raw_chapters = _parse_outline_response(raw_response)
+                break
+            except OutlineGeneratorError:
+                if attempt < 2:
+                    num_predict *= 2
+                    logger.warning(
+                        "Outline JSON parse failed (attempt %d), "
+                        "retrying with num_predict=%d",
+                        attempt + 1, num_predict,
+                    )
+                else:
+                    raise
 
         # Build IndexEntry list
         entries = _build_entries(raw_chapters)

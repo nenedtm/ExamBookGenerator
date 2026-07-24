@@ -28,7 +28,7 @@ from typing import Literal
 
 from core.models import Chunk, Document, Topic
 from llm.ollama_client import OllamaClient, OllamaError
-from llm.prompt_manager import build_topic_prompt
+from llm.prompt_manager import build_topic_prompt, build_syllabus_extraction_prompt
 from utils import parse_llm_json
 from utils.config import ConfigManager
 from utils.logger import get_logger
@@ -137,21 +137,18 @@ def _chunks_for_topic(
 # ── Syllabus parsing and coverage ────────────────────────────────────────────
 
 
-def _parse_syllabus_entries(text: str) -> list[str]:
-    """Extract individual topic entries from a syllabus text.
+def _parse_syllabus_entries_regex(text: str) -> list[str]:
+    """Fast regex-based extraction of topic entries from a syllabus.
 
-    Handles common syllabus formats:
-    - Numbered lists (``1. Topic``, ``1) Topic``)
-    - Bullet points (``- Topic``, ``* Topic``)
-    - One topic per line (plain lines)
-    - Roman numeral lists (``I. Topic``, ``ii) Topic``)
+    Works well for structured lists (numbered, bulleted).  Returns an
+    empty list when the text looks like free-form prose (no line-level
+    structure detected).
     """
     entries: list[str] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        # Strip numbering / bullets
         cleaned = re.sub(
             r"^[\-•*]\s+|^\d+[\.\)]\s+|^[ivxIVX]+[\.\)]\s+",
             "",
@@ -204,18 +201,24 @@ def _find_syllabus_entry_for_topic(
 
 def _ensure_syllabus_coverage(
     topics: list[Topic],
-    syllabus_text: str | None,
+    syllabus_entries: list[str],
     all_chunks: list[Chunk],
 ) -> list[Topic]:
     """Verify that every syllabus entry has a corresponding topic.
 
     Missing entries are inserted as new ``Topic`` objects with
     ``order_source="syllabus"`` and keyword-matched chunks.
-    """
-    if not syllabus_text:
-        return topics
 
-    syllabus_entries = _parse_syllabus_entries(syllabus_text)
+    Parameters
+    ----------
+    topics:
+        Topics already identified by the LLM.
+    syllabus_entries:
+        Ordered list of topic names extracted from the syllabus
+        (via LLM or regex fallback).
+    all_chunks:
+        All source material chunks, used for keyword matching.
+    """
     if not syllabus_entries:
         return topics
 
@@ -366,11 +369,28 @@ class TopicAnalyzer:
             len(chunks),
             "yes" if syllabus_text else "no",
         )
-        raw_response = self._client.generate(
-            prompt,
-            options={"num_predict": 8192},
-        )
-        raw_topics = _parse_topics_response(raw_response)
+
+        # Topic lists can be long — start with a generous token budget
+        # and retry with a larger one if the JSON is truncated.
+        num_predict = 16384
+        for attempt in range(3):
+            raw_response = self._client.generate(
+                prompt,
+                options={"num_predict": num_predict},
+            )
+            try:
+                raw_topics = _parse_topics_response(raw_response)
+                break
+            except TopicAnalyzerError:
+                if attempt < 2:
+                    num_predict *= 2
+                    logger.warning(
+                        "Topic analysis JSON parse failed (attempt %d), "
+                        "retrying with num_predict=%d",
+                        attempt + 1, num_predict,
+                    )
+                else:
+                    raise
 
         # Build chunk ID map from LLM response
         chunk_id_map = _chunk_ids_from_response(raw_topics)
@@ -382,8 +402,9 @@ class TopicAnalyzer:
 
         # ── Ensure all syllabus entries are covered ───────────────────
         if scope == "full" and syllabus_text:
+            syllabus_entries = self._extract_syllabus_topics(syllabus_text)
             topics = _ensure_syllabus_coverage(
-                topics, syllabus_text, chunks,
+                topics, syllabus_entries, chunks,
             )
 
         # ── scope == "topic" → single-topic focus ──────────────────────
@@ -421,6 +442,53 @@ class TopicAnalyzer:
             logger.warning("Syllabus path configured but not found: %s", path)
 
         return None
+
+    def _extract_syllabus_topics(self, syllabus_text: str) -> list[str]:
+        """Extract an ordered list of topic names from the syllabus text.
+
+        Uses the LLM to parse free-form prose, structured lists, or any
+        mixed format.  Falls back to regex extraction if the LLM call fails.
+        """
+        # Fast path: if the syllabus is short and looks like a list,
+        # the regex parser is sufficient and avoids an LLM call.
+        regex_entries = _parse_syllabus_entries_regex(syllabus_text)
+        lines = [l for l in syllabus_text.splitlines() if l.strip()]
+        looks_like_list = regex_entries and len(regex_entries) >= len(lines) * 0.5
+
+        if len(syllabus_text) < 1500 and looks_like_list:
+            logger.info(
+                "Syllabus looks like a structured list (%d entries) — "
+                "skipping LLM extraction",
+                len(regex_entries),
+            )
+            return regex_entries
+
+        # Complex or prose syllabus — use the LLM
+        prompt = build_syllabus_extraction_prompt(syllabus_text)
+        logger.info(
+            "Extracting topics from syllabus via LLM (%d chars)",
+            len(syllabus_text),
+        )
+        try:
+            raw = self._client.generate(
+                prompt,
+                options={"num_predict": 4096},
+            )
+            obj = parse_llm_json(raw, label="Syllabus extraction")
+            topics_list = obj.get("topics", []) if isinstance(obj, dict) else []
+            if isinstance(topics_list, list) and topics_list:
+                entries = [str(t) for t in topics_list if t]
+                logger.info("LLM extracted %d topic(s) from syllabus", len(entries))
+                return entries
+        except Exception as exc:
+            logger.warning("LLM syllabus extraction failed: %s — falling back to regex", exc)
+
+        # Fallback to regex
+        if regex_entries:
+            logger.info("Using regex fallback: %d entries", len(regex_entries))
+        else:
+            logger.warning("No syllabus entries could be extracted")
+        return regex_entries
 
     def _apply_topic_focus(
         self,
