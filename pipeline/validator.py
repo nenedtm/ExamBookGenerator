@@ -127,8 +127,7 @@ def validate_manual(
     checks.append(_check_empty_chapters(chapters))
 
     # ── 4. Missing sections ───────────────────────────────────────────
-    for ch in chapters:
-        checks.append(_check_missing_sections(ch))
+    checks.append(_check_missing_sections_bulk(chapters))
 
     # ── 5. Duplicate content ───────────────────────────────────────────
     checks.append(_check_duplicate_content(chapters))
@@ -246,6 +245,39 @@ def _check_missing_sections(chapter: dict) -> dict:
     # at the manual level — it's already done per-chapter during generation.
     # Return pass for manual-level validation.
     return {"check": "missing_sections", "status": "pass", "errors": []}
+
+
+def _check_missing_sections_bulk(chapters: list[dict]) -> dict:
+    """Check that chapter bodies are not just headings without body text."""
+    errors: list[str] = []
+    for ch in chapters:
+        body = ch.get("body", "").strip()
+        if not body:
+            continue
+        # Check if body has any text lines beyond headings
+        has_text = False
+        for line in body.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if re.match(r"^#{1,6}\s", stripped):
+                continue
+            if re.match(r"^---+\s*$", stripped):
+                continue
+            if stripped.startswith(">"):
+                continue
+            if re.match(r"^\[Chunk\s", stripped):
+                continue
+            if stripped == "[...]":
+                continue
+            has_text = True
+            break
+        if not has_text:
+            title = ch.get("title", "??")
+            errors.append(f"Chapter '{title}' contains only headings with no body text")
+
+    status = "fail" if errors else "pass"
+    return {"check": "missing_sections", "status": status, "errors": errors}
 
 
 def _check_duplicate_content(chapters: list[dict]) -> dict:

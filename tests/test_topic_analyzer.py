@@ -106,7 +106,7 @@ class TestParseTopicsResponse:
             _parse_topics_response('{"other": []}')
 
     def test_invalid_json_raises(self) -> None:
-        with pytest.raises(TopicAnalyzerError, match="could not extract JSON"):
+        with pytest.raises(TopicAnalyzerError, match="unrecognisable JSON"):
             _parse_topics_response("not json at all {{{")
 
     def test_empty_topics_list(self) -> None:
@@ -391,7 +391,7 @@ class TestTopicAnalyzerErrors:
         mock_client.generate.return_value = "I don't understand."
 
         analyzer = TopicAnalyzer(mock_client)
-        with pytest.raises(TopicAnalyzerError, match="could not extract JSON"):
+        with pytest.raises(TopicAnalyzerError, match="unrecognisable JSON"):
             analyzer.analyze(_chunks(), output_path=tmp_path / "topics.json")
 
     def test_llm_topics_array_wrong_type(self, tmp_path: Path) -> None:

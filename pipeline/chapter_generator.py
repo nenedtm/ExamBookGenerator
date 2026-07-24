@@ -116,6 +116,54 @@ def _parse_chapter_response(raw: str) -> dict[str, object]:
     return obj
 
 
+def _has_meaningful_content(content: str) -> bool:
+    """Check whether *content* contains body text beyond headings.
+
+    Returns ``False`` when the content consists only of Markdown headings
+    (``#``, ``##``, ``###``), horizontal rules, or blank lines.
+    """
+    for line in content.split("\n"):
+        stripped = line.strip()
+        # Skip blank lines, headings, horizontal rules, blockquotes, chunk refs
+        if not stripped:
+            continue
+        if re.match(r"^#{1,6}\s", stripped):
+            continue
+        if re.match(r"^---+\s*$", stripped):
+            continue
+        if stripped.startswith(">"):
+            continue
+        if stripped.startswith("[Chunk"):
+            continue
+        # Found a line with actual body text
+        return True
+    return False
+
+
+def _clean_content(content: str) -> str:
+    """Remove artifact lines that should not appear in the final output.
+
+    Strips raw chunk-metadata headers (``[Chunk ...]``, ``--- Source N ---``),
+    ``[...]`` placeholder lines, and ``#stochastic-processes``-style tags.
+    """
+    cleaned_lines: list[str] = []
+    for line in content.split("\n"):
+        stripped = line.strip()
+        # Remove chunk metadata headers
+        if re.match(r"^\[Chunk\s", stripped):
+            continue
+        if re.match(r"^---\s*Source\s+\d+\s*---$", stripped):
+            continue
+        # Remove bare placeholder lines like "[...]"
+        if stripped == "[...]":
+            continue
+        # Remove tag lines like "#stochastic-processes #brownian-motion ..."
+        if re.match(r"^#[a-z]", stripped) and " " in stripped:
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+
 # ── Index entries from sections ──────────────────────────────────────────────
 
 
@@ -305,27 +353,43 @@ def generate_chapter(
         "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks, num_predict=%d)",
         topic.name, scope, depth_level, len(chunks), num_predict,
     )
-    for attempt in range(3):
+    parsed = None
+    for attempt in range(5):
         raw_response = client.generate(
             prompt,
             options={"num_predict": num_predict},
         )
         try:
             parsed = _parse_chapter_response(raw_response)
-            break
+            # Verify the content has actual body text, not just headings
+            content_str = str(parsed.get("content", "")).strip()
+            if _has_meaningful_content(content_str):
+                break
+            logger.warning(
+                "Chapter for '%s' has no body text (attempt %d), retrying",
+                topic.name, attempt + 1,
+            )
+            parsed = None
         except ChapterGeneratorError:
-            if attempt < 2:
-                num_predict = int(num_predict * 1.5)
-                logger.warning(
-                    "Chapter JSON parse failed for '%s' (attempt %d), "
-                    "retrying with num_predict=%d",
-                    topic.name, attempt + 1, num_predict,
-                )
-            else:
-                raise
+            parsed = None
+
+        if attempt < 4:
+            num_predict = int(num_predict * 1.5)
+            logger.warning(
+                "Chapter generation failed for '%s' (attempt %d), "
+                "retrying with num_predict=%d",
+                topic.name, attempt + 1, num_predict,
+            )
+
+    if parsed is None:
+        raise ChapterGeneratorError(
+            f"Failed to generate meaningful content for topic '{topic.name}' "
+            f"after 5 attempts"
+        )
 
     title = str(parsed["title"]).strip()
     content = str(parsed["content"]).strip()
+    content = _clean_content(content)
     sections: list[str] = parsed.get("sections", [])  # type: ignore[assignment]
 
     # ── Index entries ──────────────────────────────────────────────────

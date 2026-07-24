@@ -181,12 +181,12 @@ def _consolidate_entries(
 ) -> list[IndexEntry]:
     """Build a consolidated list of ``IndexEntry`` for the global TOC.
 
-    Uses *provided_entries* if non-empty.  Otherwise builds entries from
-    the ``## `` headings in each chapter.
+    Always rebuilds from the actual chapter headings (after numbering)
+    so that TOC anchors match the real ``# N. Title`` headings.
+    The *provided_entries* are used only as a fallback when no chapters
+    are available (e.g. empty merge).
     """
-    if provided_entries:
-        # Filter to level-1 only for the global TOC top-level,
-        # keep level-2 for sub-sections
+    if not chapters_md:
         return provided_entries
 
     entries: list[IndexEntry] = []
@@ -202,17 +202,6 @@ def _consolidate_entries(
             )
         )
         order += 1
-
-        for h2 in _extract_h2_headings(md):
-            entries.append(
-                IndexEntry(
-                    title=h2,
-                    anchor=_slugify(h2),
-                    level=2,
-                    order=order,
-                )
-            )
-            order += 1
 
     return entries
 
@@ -293,14 +282,22 @@ def _merge_full(
     if has_syllabus:
         chapters_md = _sort_chapters_by_syllabus(chapters_md, topics)
 
-    # ── Consolidate index entries ──────────────────────────────────────
-    consolidated = _consolidate_entries(chapters_md, index_entries)
+    # ── Process chapters (strip TOC, normalize, number) ────────────────
+    processed_chapters: list[str] = []
+    for idx, md in enumerate(chapters_md, 1):
+        md = _strip_local_toc(md)
+        md = _normalise_image_paths(md)
+        md = _add_numbering(md, idx)
+        processed_chapters.append(md)
+
+    # ── Build TOC from actual numbered headings ────────────────────────
+    consolidated = _consolidate_entries(processed_chapters, index_entries)
 
     # ── Build output ───────────────────────────────────────────────────
     parts: list[str] = []
 
     # Metadata
-    parts.append(_build_metadata(cfg, scope="full", topic_count=len(chapters_md)))
+    parts.append(_build_metadata(cfg, scope="full", topic_count=len(processed_chapters)))
     parts.append("")
 
     # Title
@@ -317,11 +314,8 @@ def _merge_full(
     parts.append("---")
     parts.append("")
 
-    # Chapters
-    for idx, md in enumerate(chapters_md, 1):
-        md = _strip_local_toc(md)
-        md = _normalise_image_paths(md)
-        md = _add_numbering(md, idx)
+    # Chapters with separators
+    for md in processed_chapters:
         parts.append(md.strip())
         parts.append("")
         parts.append("---")

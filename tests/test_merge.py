@@ -183,16 +183,26 @@ class TestSortChaptersBySyllabus:
 # ── _consolidate_entries ─────────────────────────────────────────────────────
 
 class TestConsolidateEntries:
-    def test_uses_provided_entries(self) -> None:
-        entries = _entries()
-        result = _consolidate_entries([CHAPTER_1, CHAPTER_2], entries)
-        assert result == entries
-
     def test_builds_from_chapters(self) -> None:
         result = _consolidate_entries([CHAPTER_1, CHAPTER_2], [])
         titles = [e.title for e in result if e.level == 1]
         assert "Linear Algebra" in titles
         assert "Calculus" in titles
+
+    def test_ignores_provided_when_chapters_present(self) -> None:
+        entries = _entries()
+        result = _consolidate_entries([CHAPTER_1, CHAPTER_2], entries)
+        # Should rebuild from actual headings, not use provided entries
+        titles = [e.title for e in result]
+        assert "Linear Algebra" in titles
+        assert "Calculus" in titles
+        # Sub-sections from provided entries should NOT appear
+        assert "Vector Spaces" not in titles
+
+    def test_falls_back_to_provided_when_no_chapters(self) -> None:
+        entries = _entries()
+        result = _consolidate_entries([], entries)
+        assert result == entries
 
 
 # ── _write_output ────────────────────────────────────────────────────────────
@@ -228,9 +238,9 @@ class TestMergeFull:
             # Title present
             assert "# Exam Manual" in content
 
-            # Global TOC present
-            assert "- [Linear Algebra](#linear-algebra)" in content
-            assert "- [Calculus](#calculus)" in content
+            # Global TOC present (only top-level chapters)
+            assert "- [1. Linear Algebra](#1-linear-algebra)" in content
+            assert "- [2. Calculus](#2-calculus)" in content
 
             # Chapter numbering
             assert "# 1." in content
@@ -238,9 +248,8 @@ class TestMergeFull:
 
             # Local TOCs stripped
             local_toc_count = content.count("- [Vector Spaces]")
-            # Should appear in global TOC but NOT in chapter body
-            # (global TOC has it, local was stripped)
-            assert local_toc_count >= 1
+            # Should NOT appear in the output (local TOC stripped, not in global)
+            assert local_toc_count == 0
 
         finally:
             os.chdir(Path(__file__).resolve().parent.parent)
@@ -357,12 +366,12 @@ class TestIntegration:
 
             assert content_lines[0] == "# Exam Manual"
 
-            # TOC should follow title
+            # TOC should follow title with numbered chapter headings
             toc_line = next(
                 l for l in content_lines[1:10]
                 if l.startswith("- [")
             )
-            assert "linear-algebra" in toc_line
+            assert "1-linear-algebra" in toc_line or "linear-algebra" in toc_line
 
         finally:
             os.chdir(Path(__file__).resolve().parent.parent)

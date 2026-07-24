@@ -73,14 +73,50 @@ def _parse_topics_response(raw: str) -> list[dict[str, object]]:
 
 def _build_topic(raw: dict[str, object], order: int) -> Topic:
     """Construct a ``Topic`` from a single parsed LLM dict."""
+    name = str(raw.get("name", f"Topic {order + 1}")).strip()
+    # Filter out clearly invalid / garbage topic names
+    if _is_invalid_topic_name(name):
+        name = f"Topic {order + 1}"
     return Topic(
-        name=str(raw.get("name", f"Topic {order + 1}")),
+        name=name,
         description=str(raw.get("description", "")),
         related_documents=[str(d) for d in raw.get("related_documents", [])],
         subtopic_count=int(raw.get("subtopic_count", 0)),
         order_source=raw.get("order_source", "pedagogical"),  # type: ignore[arg-type]
         syllabus_position=raw.get("syllabus_position"),  # type: ignore[assignment]
     )
+
+
+def _is_invalid_topic_name(name: str) -> bool:
+    """Return ``True`` when *name* is clearly a placeholder or garbage.
+
+    Examples of invalid names: ``topic1``, ``topic 2``, ``T1``, ``Untitled``.
+    """
+    import re as _re
+    cleaned = name.lower().strip()
+    # Matches patterns like "topic1", "topic 1", "Topic-1", "T1", etc.
+    if _re.match(r"^(topic|t)\s*\d+$", cleaned):
+        return True
+    if cleaned in ("untitled", "no title", "n/a", "none", ""):
+        return True
+    # Single character or purely numeric
+    if len(cleaned) <= 1 or cleaned.isdigit():
+        return True
+    return False
+
+
+def _deduplicate_topics(topics: list[Topic]) -> list[Topic]:
+    """Remove duplicate topic names, keeping the first occurrence."""
+    seen: set[str] = set()
+    result: list[Topic] = []
+    for t in topics:
+        key = t.name.lower().strip()
+        if key in seen:
+            logger.warning("Duplicate topic '%s' removed", t.name)
+            continue
+        seen.add(key)
+        result.append(t)
+    return result
 
 
 # ── Chunk relevance helpers ──────────────────────────────────────────────────
@@ -399,6 +435,9 @@ class TopicAnalyzer:
         topics: list[Topic] = [
             _build_topic(raw, idx) for idx, raw in enumerate(raw_topics)
         ]
+
+        # Remove duplicate topic names (keep first occurrence)
+        topics = _deduplicate_topics(topics)
 
         # ── Ensure all syllabus entries are covered ───────────────────
         if scope == "full" and syllabus_text:

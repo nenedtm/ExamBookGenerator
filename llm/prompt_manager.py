@@ -85,8 +85,8 @@ def _chunks_text(
     effective_limit = int(max_chars * depth_factor)
     parts: list[str] = []
     total = 0
-    for c in chunks:
-        header = f"[Chunk {c.id} | document={c.document_id} | pos={c.position}]"
+    for idx, c in enumerate(chunks, 1):
+        header = f"--- Source {idx} ---"
         body = c.content
         if total + len(header) + len(body) > effective_limit:
             remaining = effective_limit - total
@@ -278,6 +278,10 @@ def build_chapter_prompt(
         f"Write the chapter in Markdown. Use ## for the chapter title and "
         f"### for sub-sections. Do NOT include a table of contents or "
         f"index — these are built programmatically elsewhere.\n\n"
+        f"CRITICAL: Every section heading (## and ###) MUST be followed by "
+        f"at least one paragraph of body text. Never leave a heading "
+        f"without content below it. If you include a heading, you must "
+        f"write substantive text for that section.\n\n"
         f"Return a JSON object with:\n"
         f"- \"title\" (string): the chapter title.\n"
         f"- \"content\" (string): the full Markdown body of the chapter.\n"
@@ -360,6 +364,10 @@ def build_focus_topic_prompt(
         f"Write the chapter in Markdown. Use ## for the chapter title and "
         f"### for sub-sections. Do NOT include a table of contents or "
         f"index — these are built programmatically elsewhere.\n\n"
+        f"CRITICAL: Every section heading (## and ###) MUST be followed by "
+        f"at least one paragraph of body text. Never leave a heading "
+        f"without content below it. If you include a heading, you must "
+        f"write substantive text for that section.\n\n"
         f"Return a JSON object with:\n"
         f"- \"title\" (string): the chapter title (must match the focus "
         f"topic).\n"

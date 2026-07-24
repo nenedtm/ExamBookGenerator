@@ -146,7 +146,7 @@ class TestParseChapterResponse:
         assert result["sections"] == []
 
     def test_invalid_json_raises(self) -> None:
-        with pytest.raises(ChapterGeneratorError, match="could not extract JSON"):
+        with pytest.raises(ChapterGeneratorError, match="unrecognisable JSON"):
             _parse_chapter_response("not json at all {{{")
 
 
@@ -391,7 +391,7 @@ class TestGenerateChapterErrors:
         topic = _make_topic()
         chunks = _make_chunks()
 
-        with pytest.raises(ChapterGeneratorError, match="could not extract JSON"):
+        with pytest.raises(ChapterGeneratorError, match="Failed to generate meaningful content"):
             generate_chapter(
                 topic, chunks, SIMPLE_TEMPLATE,
                 depth_level=5, scope="full", client=client,

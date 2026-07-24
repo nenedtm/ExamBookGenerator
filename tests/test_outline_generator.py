@@ -155,7 +155,7 @@ class TestParseOutlineResponse:
             _parse_outline_response('{"other": []}')
 
     def test_invalid_json_raises(self) -> None:
-        with pytest.raises(OutlineGeneratorError, match="could not extract JSON"):
+        with pytest.raises(OutlineGeneratorError, match="unrecognisable JSON"):
             _parse_outline_response("not json at all {{{")
 
     def test_empty_chapters_list(self) -> None:
@@ -349,7 +349,7 @@ class TestOutlineGeneratorErrors:
         mock_client.generate.return_value = "I don't understand."
 
         gen = OutlineGenerator(mock_client)
-        with pytest.raises(OutlineGeneratorError, match="could not extract JSON"):
+        with pytest.raises(OutlineGeneratorError, match="unrecognisable JSON"):
             gen.generate(
                 _two_topics(),
                 output_path=tmp_path / "outline.md",
