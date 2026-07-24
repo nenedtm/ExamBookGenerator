@@ -231,3 +231,23 @@ class IndexEntry:
             raise ValueError(f"level must be >= 1, got {self.level}")
         if self.order < 0:
             raise ValueError(f"order must be >= 0, got {self.order}")
+
+
+@dataclass
+class OutlineChapter:
+    """A chapter planned by the outline generator.
+
+    Attributes
+    ----------
+    title:
+        The chapter heading as determined by the outline.
+    sections:
+        Ordered list of sub-section headings within this chapter.
+    topic_indices:
+        Indices into the topic list that this outline chapter covers.
+        The outline generator may group multiple topics into one chapter.
+    """
+
+    title: str = ""
+    sections: list[str] = field(default_factory=list)
+    topic_indices: list[int] = field(default_factory=list)

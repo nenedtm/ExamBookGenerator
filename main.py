@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from core.models import Document, ExtractedImage, FileType, Topic
+from core.models import Document, ExtractedImage, FileType, OutlineChapter, Topic
 from llm.ollama_client import OllamaClient
 from pipeline.chapter_generator import generate_chapter
 from pipeline.chunker import create_chunks
@@ -195,6 +195,70 @@ def _parse_all(documents: list[Document]) -> tuple[list[Document], list[Extracte
 # ── Main pipeline ────────────────────────────────────────────────────────────
 
 
+def _collect_chunks_for_topic(topic: Topic, all_chunks: list) -> list:
+    """Collect all chunks relevant to a topic, with keyword fallback."""
+    topic_chunks = [
+        c for c in all_chunks
+        if c.document_id in set(topic.related_documents)
+    ]
+    if not topic_chunks:
+        topic_chunks = _chunks_for_topic(topic.name, all_chunks)
+    return topic_chunks
+
+
+def _collect_images_for_topic(topic: Topic, all_images: list, no_images: bool) -> list:
+    """Collect images for a topic's documents."""
+    if no_images:
+        return []
+    topic_doc_ids = set(topic.related_documents)
+    return [img for img in all_images if img.source_document_id in topic_doc_ids]
+
+
+def _find_closest_topic_for_chapter(
+    chapter_title: str,
+    topics: list,
+    exclude_indices: set[int],
+) -> object | None:
+    """Find the best matching uncovered topic for an outline chapter title."""
+    import re as _re
+    title_words = {
+        w for w in _re.split(r"[^a-z0-9]+", chapter_title.lower()) if len(w) > 3
+    }
+    best = None
+    best_score = 0
+    for idx, t in enumerate(topics):
+        if idx in exclude_indices:
+            continue
+        topic_words = {
+            w for w in _re.split(r"[^a-z0-9]+", t.name.lower()) if len(w) > 3
+        }
+        overlap = len(title_words & topic_words)
+        if overlap > best_score:
+            best_score = overlap
+            best = t
+    return best
+
+
+def _build_chapter_local_entries(outline_chapter) -> list:
+    """Build IndexEntry list for a chapter's local TOC from outline data."""
+    from core.models import IndexEntry
+    from pipeline.outline_generator import slugify
+
+    entries = []
+    entries.append(IndexEntry(
+        title=outline_chapter.title,
+        anchor=slugify(outline_chapter.title),
+        level=1, order=0,
+    ))
+    for i, sec in enumerate(outline_chapter.sections, 1):
+        entries.append(IndexEntry(
+            title=sec,
+            anchor=slugify(sec),
+            level=2, order=i,
+        ))
+    return entries
+
+
 def run_pipeline(
     args: argparse.Namespace,
     progress_callback: callable | None = None,
@@ -361,55 +425,106 @@ def run_pipeline(
     # ── 12. Outline ───────────────────────────────────────────────────
     _progress(6, "Generating outline...")
     outline_gen = OutlineGenerator(client, cfg)
-    _, index_entries = outline_gen.generate(topics, scope=scope)
+    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
 
     # ── 13. Chapter generation ────────────────────────────────────────
     _progress(7, "Generating chapters...")
     template = load_template(template_path)
     chapters_md: list[str] = []
+    covered_topic_indices: set[int] = set()
 
-    for topic in topics:
-        logger.info("  Generating chapter: %s", topic.name)
+    if scope == "topic":
+        # Focus mode: single chapter, ignore outline structure
+        for topic in topics:
+            logger.info("  Generating chapter: %s", topic.name)
+            topic_chunks = _collect_chunks_for_topic(topic, all_chunks)
+            topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
+            chapter_md, _, _ = generate_chapter(
+                topic, topic_chunks, template,
+                depth_level=effective_depth,
+                candidate_images=topic_images,
+                scope=scope, client=client, cfg=cfg,
+            )
+            chapters_md.append(chapter_md)
+    else:
+        # Full mode: iterate over outline chapters, matching topics to each
+        for outline_ch in outline_chapters:
+            logger.info("  Generating chapter: %s", outline_ch.title)
 
-        # Collect chunks for this topic
-        topic_chunks = [
-            c for c in all_chunks
-            if c.document_id in set(topic.related_documents)
-        ]
+            # Collect topics matched to this outline chapter
+            matched_topics = [
+                topics[i] for i in outline_ch.topic_indices
+                if i < len(topics)
+            ]
+            # Track which topics are covered
+            for i in outline_ch.topic_indices:
+                if i < len(topics):
+                    covered_topic_indices.add(i)
 
-        # Fallback: if no chunks matched by document ID, try keyword matching
-        if not topic_chunks:
-            topic_chunks = _chunks_for_topic(topic.name, all_chunks)
-            if topic_chunks:
-                logger.info(
-                    "  Fallback: found %d chunk(s) for '%s' via keyword matching",
-                    len(topic_chunks), topic.name,
+            # Collect all chunks from matched topics
+            all_topic_chunks = []
+            all_topic_images = []
+            for t in matched_topics:
+                all_topic_chunks.extend(_collect_chunks_for_topic(t, all_chunks))
+                all_topic_images.extend(_collect_images_for_topic(t, extracted_images, args.no_images))
+
+            # If no topics matched, find the closest topic by name
+            if not matched_topics and topics:
+                best_topic = _find_closest_topic_for_chapter(outline_ch.title, topics, covered_topic_indices)
+                if best_topic:
+                    idx = topics.index(best_topic)
+                    covered_topic_indices.add(idx)
+                    all_topic_chunks.extend(_collect_chunks_for_topic(best_topic, all_chunks))
+                    all_topic_images.extend(_collect_images_for_topic(best_topic, extracted_images, args.no_images))
+                    matched_topics.append(best_topic)
+
+            # Deduplicate chunks by content
+            seen_content: set[str] = set()
+            unique_chunks = []
+            for c in all_topic_chunks:
+                if c.content not in seen_content:
+                    seen_content.add(c.content)
+                    unique_chunks.append(c)
+
+            # Deduplicate images by id
+            seen_img_ids: set[str] = set()
+            unique_images = []
+            for img in all_topic_images:
+                if img.id not in seen_img_ids:
+                    seen_img_ids.add(img.id)
+                    unique_images.append(img)
+
+            # Use the first matched topic as the primary topic for the prompt
+            primary_topic = matched_topics[0] if matched_topics else Topic(
+                name=outline_ch.title, description=outline_ch.title,
+            )
+
+            # Build index entries for this chapter's local TOC
+            chapter_entries = _build_chapter_local_entries(outline_ch)
+
+            chapter_md, _, _ = generate_chapter(
+                primary_topic, unique_chunks, template,
+                depth_level=effective_depth,
+                candidate_images=unique_images if not args.no_images else [],
+                index_entries=chapter_entries,
+                outline_chapter=outline_ch,
+                scope="full", client=client, cfg=cfg,
+            )
+            chapters_md.append(chapter_md)
+
+        # Generate chapters for any uncovered topics
+        for idx, topic in enumerate(topics):
+            if idx not in covered_topic_indices:
+                logger.info("  Generating chapter for uncovered topic: %s", topic.name)
+                topic_chunks = _collect_chunks_for_topic(topic, all_chunks)
+                topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
+                chapter_md, _, _ = generate_chapter(
+                    topic, topic_chunks, template,
+                    depth_level=effective_depth,
+                    candidate_images=topic_images if not args.no_images else [],
+                    scope=scope, client=client, cfg=cfg,
                 )
-            else:
-                logger.warning(
-                    "  No source material found for topic '%s' — "
-                    "generating from topic description only",
-                    topic.name,
-                )
-
-        # Filter images for this topic's documents
-        topic_doc_ids = set(topic.related_documents)
-        topic_images = [
-            img for img in extracted_images
-            if img.source_document_id in topic_doc_ids
-        ]
-
-        chapter_md, _, _ = generate_chapter(
-            topic,
-            topic_chunks,
-            template,
-            depth_level=effective_depth,
-            candidate_images=topic_images if not args.no_images else [],
-            scope=scope,
-            client=client,
-            cfg=cfg,
-        )
-        chapters_md.append(chapter_md)
+                chapters_md.append(chapter_md)
 
     # ── 14. Merge ─────────────────────────────────────────────────────
     _progress(8, "Assembling final output...")

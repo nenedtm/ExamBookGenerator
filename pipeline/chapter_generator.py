@@ -29,7 +29,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from core.models import Chunk, ExtractedImage, IndexEntry, Topic
+from core.models import Chunk, ExtractedImage, IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaClient, OllamaError
 from llm.prompt_manager import (
     build_chapter_prompt,
@@ -294,6 +294,7 @@ def generate_chapter(
     depth_level: int,
     candidate_images: list[ExtractedImage] | None = None,
     index_entries: list[IndexEntry] | None = None,
+    outline_chapter: OutlineChapter | None = None,
     scope: str = "full",
     client: OllamaClient | None = None,
     cfg: ConfigManager | None = None,
@@ -317,6 +318,10 @@ def generate_chapter(
     index_entries:
         Pre-built entries for this chapter's local TOC.  When *None*,
         the function builds entries from the LLM's ``sections`` list.
+    outline_chapter:
+        The planned chapter structure from the outline generator.
+        When provided, the LLM is instructed to use the given title
+        and sections as the required structure.
     scope:
         ``"full"`` or ``"topic"``.
     client:
@@ -345,7 +350,10 @@ def generate_chapter(
     if scope == "topic":
         prompt = build_focus_topic_prompt(topic.name, chunks, depth_level)
     else:
-        prompt = build_chapter_prompt(topic, chunks, depth_level)
+        prompt = build_chapter_prompt(
+            topic, chunks, depth_level,
+            outline_chapter=outline_chapter,
+        )
 
     # ── Query LLM ─────────────────────────────────────────────────────
     num_predict = _num_predict_for_depth(depth_level)

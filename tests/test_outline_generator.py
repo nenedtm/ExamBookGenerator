@@ -240,7 +240,7 @@ class TestOutlineGeneratorFull:
         mock_client.generate.return_value = _llm_outline_response()
 
         gen = OutlineGenerator(mock_client)
-        md, entries = gen.generate(
+        md, entries, outline_chapters = gen.generate(
             _two_topics(),
             scope="full",
             output_path=tmp_path / "outline.md",
@@ -255,13 +255,14 @@ class TestOutlineGeneratorFull:
         assert entries[4].level == 2  # "Derivatives"
         assert entries[5].level == 2  # "Integrals"
         assert md  # non-empty markdown
+        assert len(outline_chapters) == 2  # 2 outline chapters
 
     def test_respects_topic_order(self, tmp_path: Path) -> None:
         mock_client = MagicMock()
         mock_client.generate.return_value = _llm_outline_response()
 
         gen = OutlineGenerator(mock_client)
-        _, entries = gen.generate(
+        _, entries, _ = gen.generate(
             _two_topics(),
             scope="full",
             output_path=tmp_path / "outline.md",
@@ -298,7 +299,7 @@ class TestOutlineGeneratorFull:
         mock_client.generate.return_value = response
 
         gen = OutlineGenerator(mock_client)
-        _, entries = gen.generate(
+        _, entries, _ = gen.generate(
             [Topic(name="A"), Topic(name="B")],
             scope="full",
             output_path=tmp_path / "outline.md",
@@ -316,7 +317,7 @@ class TestOutlineGeneratorFocus:
         mock_client.generate.return_value = _llm_single_chapter_response()
 
         gen = OutlineGenerator(mock_client)
-        md, entries = gen.generate(
+        md, entries, outline_chapters = gen.generate(
             _single_topic(),
             scope="topic",
             output_path=tmp_path / "outline.md",
@@ -326,6 +327,7 @@ class TestOutlineGeneratorFocus:
         assert entries[0].level == 1
         assert entries[0].title == "Linear Algebra"
         assert all(e.level == 2 for e in entries[1:])
+        assert len(outline_chapters) == 1
 
 
 # ── OutlineGenerator — empty input ───────────────────────────────────────────
@@ -334,10 +336,11 @@ class TestOutlineGeneratorEmpty:
     def test_empty_topics_returns_empty(self, tmp_path: Path) -> None:
         mock_client = MagicMock()
         gen = OutlineGenerator(mock_client)
-        md, entries = gen.generate([], output_path=tmp_path / "outline.md")
+        md, entries, outline_chapters = gen.generate([], output_path=tmp_path / "outline.md")
 
         assert md == ""
         assert entries == []
+        assert outline_chapters == []
         mock_client.generate.assert_not_called()
 
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.models import Chunk, Topic
+from core.models import Chunk, OutlineChapter, Topic
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -212,6 +212,7 @@ def build_chapter_prompt(
     topic: Topic,
     chunks: list[Chunk],
     depth_level: int,
+    outline_chapter: OutlineChapter | None = None,
 ) -> str:
     """Build a prompt to generate the Markdown content for a single chapter.
 
@@ -224,6 +225,10 @@ def build_chapter_prompt(
     depth_level:
         Detail level 1-10.  Translated to a textual instruction via
         ``_depth_instruction``.
+    outline_chapter:
+        When provided, the LLM must use the given title and section
+        structure exactly.  This ensures the generated chapter matches
+        the pre-planned outline.
 
     Returns
     -------
@@ -232,6 +237,22 @@ def build_chapter_prompt(
     """
     depth_text = _depth_instruction(depth_level)
     chunks_block = _chunks_text(chunks, depth_level=depth_level)
+
+    # ── Outline structure section ──────────────────────────────────────
+    outline_section = ""
+    if outline_chapter:
+        section_list = "\n".join(
+            f"  {i+1}. {s}" for i, s in enumerate(outline_chapter.sections)
+        )
+        outline_section = (
+            f"## REQUIRED CHAPTER STRUCTURE\n\n"
+            f"You MUST write the chapter with EXACTLY this title and "
+            f"these section headings.  Do NOT invent new headings, "
+            f"do NOT rename them, do NOT omit any.  Each section must "
+            f"contain substantive prose.\n\n"
+            f"**Chapter title:** {outline_chapter.title}\n\n"
+            f"**Sections (in order):**\n{section_list}\n\n"
+        )
 
     return (
         f"You are an expert academic author writing a university-level "
@@ -257,6 +278,7 @@ def build_chapter_prompt(
         f"reader directly.\n\n"
         f"## Topic\n\n"
         f"**{topic.name}** — {topic.description}\n\n"
+        f"{outline_section}"
         f"## Detail level\n\n"
         f"{depth_text}\n\n"
         f"The chapter length must scale naturally with the number and size "

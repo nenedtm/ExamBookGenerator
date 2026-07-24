@@ -188,6 +188,10 @@ class TestRunPipeline:
             MagicMock(title="Linear Algebra", anchor="linear-algebra", level=1, order=0),
             MagicMock(title="Calculus", anchor="calculus", level=1, order=1),
         ]
+        mock_outline_chapters = [
+            MagicMock(title="Linear Algebra", sections=["Vector Spaces", "Eigenvalues"], topic_indices=[0]),
+            MagicMock(title="Calculus", sections=["Derivatives", "Integrals"], topic_indices=[1]),
+        ]
 
         with patch("main.TopicAnalyzer") as MockAnalyzer, \
              patch("main.OutlineGenerator") as MockOutline, \
@@ -203,7 +207,7 @@ class TestRunPipeline:
             MockClient.from_config.return_value = MagicMock()
             mock_instance = MockAnalyzer.return_value
             mock_instance.analyze.return_value = mock_topics
-            MockOutline.return_value.generate.return_value = ("outline", mock_entries)
+            MockOutline.return_value.generate.return_value = ("outline", mock_entries, mock_outline_chapters)
             mock_gen_ch.return_value = ("# Chapter\n\nContent.", "Chapter", [])
             mock_validate.return_value = {
                 "overall": "pass",
@@ -226,7 +230,7 @@ class TestRunPipeline:
             # Verify pipeline was called
             mock_instance.analyze.assert_called_once()
             MockOutline.return_value.generate.assert_called_once()
-            assert mock_gen_ch.call_count == 2  # 2 topics
+            assert mock_gen_ch.call_count == 2  # 2 outline chapters
             mock_merge.assert_called_once()
             mock_validate.assert_called_once()
             assert validation["overall"] == "pass"

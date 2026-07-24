@@ -28,7 +28,7 @@ import unicodedata
 from pathlib import Path
 from typing import Literal
 
-from core.models import IndexEntry, Topic
+from core.models import IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaClient, OllamaError
 from llm.prompt_manager import build_outline_prompt
 from utils import parse_llm_json
@@ -150,6 +150,72 @@ def _build_entries(chapters: list[dict[str, object]]) -> list[IndexEntry]:
     return entries
 
 
+def _build_outline_chapters(
+    raw_chapters: list[dict[str, object]],
+    topics: list[Topic],
+) -> list[OutlineChapter]:
+    """Convert parsed LLM chapters into ``OutlineChapter`` objects.
+
+    Each outline chapter is matched to the topics it covers by
+    keyword overlap between the chapter title/sections and the
+    topic names/descriptions.
+    """
+    result: list[OutlineChapter] = []
+    for ch in raw_chapters:
+        title = str(ch.get("title", "")).strip()
+        if not title:
+            continue
+
+        sections_raw = ch.get("sections", [])
+        sections: list[str] = []
+        if isinstance(sections_raw, list):
+            sections = [str(s).strip() for s in sections_raw if str(s).strip()]
+
+        # Match this outline chapter to topics
+        topic_indices = _match_chapter_to_topics(title, sections, topics)
+
+        result.append(OutlineChapter(
+            title=title,
+            sections=sections,
+            topic_indices=topic_indices,
+        ))
+
+    return result
+
+
+def _match_chapter_to_topics(
+    chapter_title: str,
+    sections: list[str],
+    topics: list[Topic],
+) -> list[int]:
+    """Find which topics are covered by an outline chapter.
+
+    Uses keyword overlap between the chapter's title + sections and
+    each topic's name + description.
+    """
+    import re as _re
+
+    # Build a set of meaningful words from the chapter
+    chapter_text = (chapter_title + " " + " ".join(sections)).lower()
+    chapter_words = {
+        w for w in _re.split(r"[^a-z0-9]+", chapter_text) if len(w) > 3
+    }
+
+    matched: list[int] = []
+    for idx, topic in enumerate(topics):
+        topic_text = (topic.name + " " + topic.description).lower()
+        topic_words = {
+            w for w in _re.split(r"[^a-z0-9]+", topic_text) if len(w) > 3
+        }
+        if not topic_words:
+            continue
+        overlap = len(chapter_words & topic_words)
+        if overlap >= 2 or (overlap >= 1 and len(topic_words) <= 3):
+            matched.append(idx)
+
+    return matched
+
+
 # ── Markdown renderer ─────────────────────────────────────────────────────────
 
 
@@ -193,7 +259,7 @@ class OutlineGenerator:
         *,
         scope: Literal["full", "topic"] = "full",
         output_path: Path | str | None = None,
-    ) -> tuple[str, list[IndexEntry]]:
+    ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
         """Generate a structured outline from *topics*.
 
         Parameters
@@ -210,9 +276,10 @@ class OutlineGenerator:
 
         Returns
         -------
-        tuple[str, list[IndexEntry]]
-            The rendered Markdown outline string and the structured
-            ``IndexEntry`` list (with unique anchors).
+        tuple[str, list[IndexEntry], list[OutlineChapter]]
+            The rendered Markdown outline string, the structured
+            ``IndexEntry`` list (with unique anchors), and the list of
+            ``OutlineChapter`` objects describing each planned chapter.
 
         Raises
         ------
@@ -221,7 +288,7 @@ class OutlineGenerator:
         """
         if not topics:
             logger.warning("No topics provided — returning empty outline")
-            return "", []
+            return "", [], []
 
         # Build topic summary for the prompt
         topic_block = self._format_topics(topics)
@@ -264,6 +331,9 @@ class OutlineGenerator:
         entries = _build_entries(raw_chapters)
         entries = _unique_anchors(entries)
 
+        # Build OutlineChapter objects (title + sections + topic mapping)
+        outline_chapters = _build_outline_chapters(raw_chapters, topics)
+
         # Render Markdown
         outline_md = _render_outline_md(entries)
 
@@ -276,7 +346,7 @@ class OutlineGenerator:
             sum(1 for e in entries if e.level == 1),
             len(entries),
         )
-        return outline_md, entries
+        return outline_md, entries, outline_chapters
 
     # ── Internals ───────────────────────────────────────────────────────
 
