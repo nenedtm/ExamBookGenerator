@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -133,6 +134,157 @@ def _chunks_for_topic(
     return matched
 
 
+# ── Syllabus parsing and coverage ────────────────────────────────────────────
+
+
+def _parse_syllabus_entries(text: str) -> list[str]:
+    """Extract individual topic entries from a syllabus text.
+
+    Handles common syllabus formats:
+    - Numbered lists (``1. Topic``, ``1) Topic``)
+    - Bullet points (``- Topic``, ``* Topic``)
+    - One topic per line (plain lines)
+    - Roman numeral lists (``I. Topic``, ``ii) Topic``)
+    """
+    entries: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Strip numbering / bullets
+        cleaned = re.sub(
+            r"^[\-•*]\s+|^\d+[\.\)]\s+|^[ivxIVX]+[\.\)]\s+",
+            "",
+            line,
+        ).strip()
+        if cleaned and len(cleaned) > 2:
+            entries.append(cleaned)
+    return entries
+
+
+def _find_syllabus_entry_for_topic(
+    topic_name: str,
+    syllabus_entries: list[str],
+) -> int | None:
+    """Return the index of the syllabus entry that best matches *topic_name*.
+
+    Returns *None* if no match is found.
+    """
+    name_lower = topic_name.lower().strip()
+    name_words = set(name_lower.split())
+
+    best_idx: int | None = None
+    best_score = 0.0
+
+    for idx, entry in enumerate(syllabus_entries):
+        entry_lower = entry.lower().strip()
+        # Exact match
+        if name_lower == entry_lower:
+            return idx
+        # Substring containment
+        if name_lower in entry_lower or entry_lower in name_lower:
+            score = min(len(name_lower), len(entry_lower)) / max(
+                len(name_lower), len(entry_lower), 1,
+            )
+            if score > best_score:
+                best_idx = idx
+                best_score = score
+                continue
+        # Keyword overlap
+        entry_words = set(entry_lower.split())
+        overlap = len(name_words & entry_words)
+        if overlap > 0:
+            score = overlap / max(len(name_words), len(entry_words))
+            if score > best_score:
+                best_idx = idx
+                best_score = score
+
+    return best_idx if best_score >= 0.3 else None
+
+
+def _ensure_syllabus_coverage(
+    topics: list[Topic],
+    syllabus_text: str | None,
+    all_chunks: list[Chunk],
+) -> list[Topic]:
+    """Verify that every syllabus entry has a corresponding topic.
+
+    Missing entries are inserted as new ``Topic`` objects with
+    ``order_source="syllabus"`` and keyword-matched chunks.
+    """
+    if not syllabus_text:
+        return topics
+
+    syllabus_entries = _parse_syllabus_entries(syllabus_text)
+    if not syllabus_entries:
+        return topics
+
+    # Map existing topics to their syllabus positions
+    covered_indices: set[int] = set()
+    for t in topics:
+        if t.syllabus_position is not None and 0 <= t.syllabus_position < len(syllabus_entries):
+            covered_indices.add(t.syllabus_position)
+        else:
+            # Try to match by name
+            matched_idx = _find_syllabus_entry_for_topic(t.name, syllabus_entries)
+            if matched_idx is not None:
+                covered_indices.add(matched_idx)
+
+    # Find missing entries
+    missing = [
+        (idx, entry)
+        for idx, entry in enumerate(syllabus_entries)
+        if idx not in covered_indices
+    ]
+
+    if not missing:
+        return topics
+
+    logger.warning(
+        "Syllabus coverage gap: %d/%d entries not covered by LLM topics. "
+        "Creating fallback topics.",
+        len(missing),
+        len(syllabus_entries),
+    )
+
+    # Build a name→topic index for inserting new topics in order
+    result = list(topics)
+
+    for idx, entry in missing:
+        # Keyword-match chunks for this entry
+        entry_lower = entry.lower()
+        keywords = [w for w in entry_lower.split() if len(w) > 3]
+        if not keywords:
+            keywords = [entry_lower]
+        matched_chunks = [
+            c for c in all_chunks
+            if any(kw in c.content.lower() for kw in keywords)
+        ]
+        related_docs = list({c.document_id for c in matched_chunks})
+
+        fallback = Topic(
+            name=entry,
+            description=entry,
+            related_documents=related_docs,
+            subtopic_count=0,
+            order_source="syllabus",
+            syllabus_position=idx,
+        )
+
+        # Insert at the correct position based on syllabus order
+        insert_pos = len(result)
+        for i, t in enumerate(result):
+            if t.syllabus_position is not None and t.syllabus_position > idx:
+                insert_pos = i
+                break
+        result.insert(insert_pos, fallback)
+
+        logger.info("  Fallback topic for syllabus entry %d: '%s' (%d chunks)",
+                     idx, entry, len(matched_chunks))
+
+    return result
+
+
 # ── Main class ───────────────────────────────────────────────────────────────
 
 
@@ -214,7 +366,10 @@ class TopicAnalyzer:
             len(chunks),
             "yes" if syllabus_text else "no",
         )
-        raw_response = self._client.generate(prompt)
+        raw_response = self._client.generate(
+            prompt,
+            options={"num_predict": 8192},
+        )
         raw_topics = _parse_topics_response(raw_response)
 
         # Build chunk ID map from LLM response
@@ -224,6 +379,12 @@ class TopicAnalyzer:
         topics: list[Topic] = [
             _build_topic(raw, idx) for idx, raw in enumerate(raw_topics)
         ]
+
+        # ── Ensure all syllabus entries are covered ───────────────────
+        if scope == "full" and syllabus_text:
+            topics = _ensure_syllabus_coverage(
+                topics, syllabus_text, chunks,
+            )
 
         # ── scope == "topic" → single-topic focus ──────────────────────
         if scope == "topic":

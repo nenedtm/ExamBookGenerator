@@ -27,7 +27,7 @@ from pipeline.merge import merge_chapters
 from pipeline.outline_generator import OutlineGenerator
 from pipeline.scanner import scan_directory
 from pipeline.template_engine import load_template
-from pipeline.topic_analyzer import TopicAnalyzer, TopicNotFoundError
+from pipeline.topic_analyzer import TopicAnalyzer, TopicNotFoundError, _chunks_for_topic
 from pipeline.validator import validate_manual
 from utils.config import ConfigManager, ConfigValidationError, _DEFAULT_CONFIG_PATH
 from utils.logger import get_logger, setup_logging
@@ -376,6 +376,21 @@ def run_pipeline(
             c for c in all_chunks
             if c.document_id in set(topic.related_documents)
         ]
+
+        # Fallback: if no chunks matched by document ID, try keyword matching
+        if not topic_chunks:
+            topic_chunks = _chunks_for_topic(topic.name, all_chunks)
+            if topic_chunks:
+                logger.info(
+                    "  Fallback: found %d chunk(s) for '%s' via keyword matching",
+                    len(topic_chunks), topic.name,
+                )
+            else:
+                logger.warning(
+                    "  No source material found for topic '%s' — "
+                    "generating from topic description only",
+                    topic.name,
+                )
 
         # Filter images for this topic's documents
         topic_doc_ids = set(topic.related_documents)

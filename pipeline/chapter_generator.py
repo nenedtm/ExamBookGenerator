@@ -43,6 +43,28 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# ── Output token budget based on depth level ────────────────────────────────
+
+_NUM_PREDICT_MAP: dict[int, int] = {
+    1: 4096,
+    2: 6144,
+    3: 8192,
+    4: 10240,
+    5: 12288,
+    6: 16384,
+    7: 20480,
+    8: 24576,
+    9: 28672,
+    10: 32768,
+}
+
+
+def _num_predict_for_depth(depth: int) -> int:
+    """Return the Ollama ``num_predict`` token budget for *depth*."""
+    clamped = max(1, min(10, depth))
+    return _NUM_PREDICT_MAP[clamped]
+
+
 # ── Exceptions ───────────────────────────────────────────────────────────────
 
 
@@ -278,11 +300,15 @@ def generate_chapter(
         prompt = build_chapter_prompt(topic, chunks, depth_level)
 
     # ── Query LLM ─────────────────────────────────────────────────────
+    num_predict = _num_predict_for_depth(depth_level)
     logger.info(
-        "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks)",
-        topic.name, scope, depth_level, len(chunks),
+        "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks, num_predict=%d)",
+        topic.name, scope, depth_level, len(chunks), num_predict,
     )
-    raw_response = client.generate(prompt)
+    raw_response = client.generate(
+        prompt,
+        options={"num_predict": num_predict},
+    )
     parsed = _parse_chapter_response(raw_response)
 
     title = str(parsed["title"]).strip()

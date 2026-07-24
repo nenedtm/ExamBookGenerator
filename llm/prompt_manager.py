@@ -30,22 +30,31 @@ _ALWAYS_ENGLISH = (
 
 _DEPTH_MAP: dict[tuple[int, int], str] = {
     (1, 2): (
-        "Produce a concise summary.  Cover every topic and subtopic listed, "
-        "but keep explanations brief (1-3 sentences each).  No topic may be "
-        "omitted."
+        "Produce a concise, tightly written summary. Cover every topic and "
+        "subtopic, but keep explanations brief (1-3 sentences each). "
+        "No topic may be omitted. The result should read like a dense "
+        "revision card, not a list of bullet points."
     ),
     (3, 5): (
-        "Provide a clear, moderately detailed explanation of each topic, "
-        "including short examples where useful."
+        "Write a clear, moderately detailed university-level explanation. "
+        "Each topic should flow naturally into the next. Use prose, not "
+        "bullet lists. Include short examples where they aid understanding. "
+        "The text must read as a unified chapter, not as a collection of "
+        "independent notes."
     ),
     (6, 8): (
-        "Provide a thorough, well-structured explanation of each topic, "
-        "including derivations, examples, and common exam pitfalls."
+        "Write a thorough, well-structured university-level chapter. "
+        "Integrate all material into continuous, flowing prose with proper "
+        "academic style. Include derivations, worked examples, and "
+        "discussion of common exam pitfalls. The text must read as a "
+        "cohesive textbook chapter, not as rearranged lecture notes."
     ),
     (9, 10): (
-        "Provide an exhaustive, highly detailed explanation.  Do not omit "
-        "any nuance, edge case, formula derivation, or example present in "
-        "the source material."
+        "Write an exhaustive, highly detailed university-level chapter. "
+        "Do not omit any nuance, edge case, formula derivation, or example "
+        "present in the source material. Maintain a formal academic tone "
+        "throughout. Every paragraph must be original prose that synthesizes "
+        "the source material — never copy passages verbatim."
     ),
 }
 
@@ -60,19 +69,27 @@ def _depth_instruction(level: int) -> str:
     return _DEPTH_MAP[(3, 5)]
 
 
-def _chunks_text(chunks: list[Chunk], *, max_chars: int = 80_000) -> str:
+def _chunks_text(
+    chunks: list[Chunk],
+    *,
+    max_chars: int = 80_000,
+    depth_level: int = 5,
+) -> str:
     """Serialize a list of chunks into a readable text block for the prompt.
 
-    If the total content exceeds *max_chars*, later chunks are truncated
-    so that the prompt stays within reasonable limits.
+    The *max_chars* limit scales with *depth_level*: at depth 1 the cap
+    is the base ``max_chars``; at depth 10 it is 3× that value, so the
+    LLM receives more source material for higher detail levels.
     """
+    depth_factor = 1.0 + (max(1, min(10, depth_level)) - 1) * 0.22
+    effective_limit = int(max_chars * depth_factor)
     parts: list[str] = []
     total = 0
     for c in chunks:
         header = f"[Chunk {c.id} | document={c.document_id} | pos={c.position}]"
         body = c.content
-        if total + len(header) + len(body) > max_chars:
-            remaining = max_chars - total
+        if total + len(header) + len(body) > effective_limit:
+            remaining = effective_limit - total
             if remaining > 200:
                 body = body[: remaining - 20] + "\n...[truncated]"
                 parts.append(f"{header}\n{body}")
@@ -214,29 +231,53 @@ def build_chapter_prompt(
         The full prompt string.
     """
     depth_text = _depth_instruction(depth_level)
-    chunks_block = _chunks_text(chunks)
+    chunks_block = _chunks_text(chunks, depth_level=depth_level)
 
     return (
-        f"You are an expert academic writer.  Write a comprehensive "
-        f"chapter on the following topic for a university study manual.\n\n"
+        f"You are an expert academic author writing a university-level "
+        f"study manual. Write a comprehensive chapter on the following topic.\n\n"
         f"{_ALWAYS_ENGLISH}\n\n"
-        f"Topic: {topic.name}\n"
-        f"Description: {topic.description}\n\n"
-        f"Detail level instruction: {depth_text}\n\n"
-        f"The chapter length should scale naturally with the number and "
-        f"size of the source chunks provided — more material means a "
-        f"longer chapter.  Do NOT impose a fixed word count.\n\n"
+        f"## CRITICAL WRITING RULES\n\n"
+        f"1. **Do NOT copy or paste** from the source material below. You "
+        f"must **synthesize** the information into original, flowing prose.\n"
+        f"2. **Never start a paragraph with a fragment or a bullet list** "
+        f"from the source. Rewrite everything in complete, grammatically "
+        f"correct sentences.\n"
+        f"3. **Connect ideas logically.** Use transitional phrases (e.g. "
+        f"'Consequently,', 'This implies that', 'Building on the previous "
+        f"concept,'). Each section must flow naturally into the next.\n"
+        f"4. **Adopt a formal academic tone.** Write as if this were a "
+        f"textbook chapter, not a set of lecture notes. Avoid colloquial "
+        f"language, parenthetical asides, and informal abbreviations.\n"
+        f"5. **Integrate all sources.** The chunks below come from multiple "
+        f"documents. Merge overlapping explanations, resolve contradictions, "
+        f"and present a single authoritative version.\n"
+        f"6. **Use the third person or impersonal constructions** ('It can "
+        f"be shown that', 'The theory states') rather than addressing the "
+        f"reader directly.\n\n"
+        f"## Topic\n\n"
+        f"**{topic.name}** — {topic.description}\n\n"
+        f"## Detail level\n\n"
+        f"{depth_text}\n\n"
+        f"The chapter length must scale naturally with the number and size "
+        f"of the source chunks — more material means a longer chapter. "
+        f"Do NOT impose a fixed word count.\n\n"
+        f"## Required structure\n\n"
         f"The chapter must include:\n"
-        f"- A clear introduction.\n"
-        f"- Core explanations.\n"
-        f"- In-depth treatments of sub-topics.\n"
-        f"- Practical examples where appropriate.\n"
-        f"- Common exam pitfalls or frequently tested points.\n\n"
-        f"Source material chunks:\n\n"
+        f"- A clear introduction motivating the topic.\n"
+        f"- Core theoretical explanations written in continuous prose.\n"
+        f"- Rigorous treatment of sub-topics, each building on the previous.\n"
+        f"- Worked examples or concrete applications where appropriate.\n"
+        f"- Discussion of common exam pitfalls or frequently tested points.\n"
+        f"- A brief concluding paragraph summarizing the key takeaways.\n\n"
+        f"## Source material\n\n"
+        f"The following chunks contain the raw material you must synthesize. "
+        f"Use them as factual input — but the output must be entirely your "
+        f"own prose, restructured for clarity and coherence.\n\n"
         f"{chunks_block}\n\n"
-        f"Write the chapter in Markdown.  Use ## for the chapter title "
-        f"and ### for sub-sections.  Do NOT include a table of contents "
-        f"or index — these are built programmatically elsewhere.\n\n"
+        f"Write the chapter in Markdown. Use ## for the chapter title and "
+        f"### for sub-sections. Do NOT include a table of contents or "
+        f"index — these are built programmatically elsewhere.\n\n"
         f"Return a JSON object with:\n"
         f"- \"title\" (string): the chapter title.\n"
         f"- \"content\" (string): the full Markdown body of the chapter.\n"
@@ -274,27 +315,51 @@ def build_focus_topic_prompt(
         The full prompt string.
     """
     depth_text = _depth_instruction(depth_level)
-    chunks_block = _chunks_text(chunks)
+    chunks_block = _chunks_text(chunks, depth_level=depth_level)
 
     return (
-        f"You are an expert academic writer.  The user is studying a "
+        f"You are an expert academic author. The user is studying a "
         f"single specific topic and wants a focused, in-depth chapter "
-        f"dedicated exclusively to it.\n\n"
+        f"written at university level.\n\n"
         f"{_ALWAYS_ENGLISH}\n\n"
-        f"Focus topic: {focus_topic}\n\n"
-        f"Detail level instruction: {depth_text}\n\n"
-        f"IMPORTANT: Concentrate ONLY on the focus topic above.  The "
-        f"source chunks below may contain mentions of other, unrelated "
-        f"topics — you must IGNORE those entirely.  Every paragraph you "
-        f"write must be directly relevant to the focus topic.\n\n"
-        f"The chapter length should scale naturally with the number and "
-        f"size of the source chunks provided — more material means a "
-        f"longer chapter.  Do NOT impose a fixed word count.\n\n"
-        f"Source material chunks (all pre-filtered for the focus topic):\n\n"
+        f"## CRITICAL WRITING RULES\n\n"
+        f"1. **Do NOT copy or paste** from the source material below. "
+        f"**Synthesize** all information into original, flowing prose.\n"
+        f"2. **Never start a paragraph with a fragment or a bullet list** "
+        f"from the source. Rewrite everything in complete sentences.\n"
+        f"3. **Connect ideas logically.** Use transitional phrases. Each "
+        f"section must flow naturally into the next.\n"
+        f"4. **Adopt a formal academic tone** — textbook style, not "
+        f"lecture notes.\n"
+        f"5. **Integrate all sources.** Merge overlapping explanations and "
+        f"present a single authoritative account.\n\n"
+        f"## Focus topic\n\n"
+        f"**{focus_topic}**\n\n"
+        f"## Detail level\n\n"
+        f"{depth_text}\n\n"
+        f"IMPORTANT: Concentrate ONLY on the focus topic above. The "
+        f"source chunks may contain mentions of other, unrelated topics — "
+        f"you must IGNORE those entirely. Every paragraph must be directly "
+        f"relevant to the focus topic.\n\n"
+        f"The chapter length must scale naturally with the number and size "
+        f"of the source chunks — more material means a longer chapter. "
+        f"Do NOT impose a fixed word count.\n\n"
+        f"## Required structure\n\n"
+        f"The chapter must include:\n"
+        f"- A clear introduction motivating the topic.\n"
+        f"- Core theoretical explanations written in continuous prose.\n"
+        f"- Rigorous treatment of sub-topics.\n"
+        f"- Worked examples or concrete applications where appropriate.\n"
+        f"- Discussion of common exam pitfalls.\n"
+        f"- A brief concluding paragraph.\n\n"
+        f"## Source material\n\n"
+        f"The following chunks are pre-filtered for the focus topic. "
+        f"Use them as factual input — but the output must be entirely your "
+        f"own prose.\n\n"
         f"{chunks_block}\n\n"
-        f"Write the chapter in Markdown.  Use ## for the chapter title "
-        f"and ### for sub-sections.  Do NOT include a table of contents "
-        f"or index — these are built programmatically elsewhere.\n\n"
+        f"Write the chapter in Markdown. Use ## for the chapter title and "
+        f"### for sub-sections. Do NOT include a table of contents or "
+        f"index — these are built programmatically elsewhere.\n\n"
         f"Return a JSON object with:\n"
         f"- \"title\" (string): the chapter title (must match the focus "
         f"topic).\n"

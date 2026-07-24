@@ -240,7 +240,10 @@ class OutlineGenerator:
             len(topics),
             scope,
         )
-        raw_response = self._client.generate(prompt)
+        raw_response = self._client.generate(
+            prompt,
+            options={"num_predict": 8192},
+        )
         raw_chapters = _parse_outline_response(raw_response)
 
         # Build IndexEntry list
