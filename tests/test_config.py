@@ -54,7 +54,7 @@ class TestDefaults:
 
 class TestResolve:
     def test_get_existing_key(self, cfg: ConfigManager) -> None:
-        assert cfg.get("generation.depth_level") == 5
+        assert cfg.get("generation.depth_level") == 7
 
     def test_get_nested_key(self, cfg: ConfigManager) -> None:
         assert cfg.get("output.language") == "en"
@@ -219,7 +219,7 @@ class TestFocusDepthLevelValidation:
 
 class TestEffectiveDepthLevel:
     def test_full_scope_returns_global(self, cfg: ConfigManager) -> None:
-        assert cfg.get_effective_depth_level() == 5
+        assert cfg.get_effective_depth_level() == 7
 
     def test_topic_scope_with_focus(self, tmp_cfg: callable) -> None:
         cfg = tmp_cfg(

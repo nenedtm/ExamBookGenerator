@@ -16,7 +16,7 @@ syllabus:
   path: null
 
 generation:
-  depth_level: 5
+  depth_level: 7
   length_mode: "topic_driven"
   scope: "full"
   focus_topic: null

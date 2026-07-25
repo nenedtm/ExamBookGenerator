@@ -137,10 +137,10 @@ def _ask_scope() -> tuple[str, str | None, int]:
         depth_str = input(
             "Detail level for this topic (1-10, Enter to use default): "
         ).strip()
-        focus_depth = int(depth_str) if depth_str.isdigit() else 5
+        focus_depth = int(depth_str) if depth_str.isdigit() else 7
         return "topic", topic_name, focus_depth
 
-    return "full", None, 5
+    return "full", None, 7
 
 
 # ── Document parsing ─────────────────────────────────────────────────────────
