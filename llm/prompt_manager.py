@@ -86,8 +86,11 @@ def _chunks_text(
     parts: list[str] = []
     total = 0
     for idx, c in enumerate(chunks, 1):
+        body = c.content.strip()
+        # Skip chunks that are too short or look like garbage
+        if len(body) < 20:
+            continue
         header = f"--- Source {idx} ---"
-        body = c.content
         if total + len(header) + len(body) > effective_limit:
             remaining = effective_limit - total
             if remaining > 200:

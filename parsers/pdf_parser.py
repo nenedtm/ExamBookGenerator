@@ -146,9 +146,30 @@ def parse_pdf(path: Path | str) -> tuple[Document, list[ExtractedImage]]:
     if not doc.content.strip():
         logger.info("PDF %s yielded no extractable text", pdf_path)
     else:
-        logger.info(
-            "Parsed PDF %s — %d chars, %d image(s)",
-            pdf_path, len(doc.content), len(images),
-        )
+        # Validate that extracted text is not mostly PDF internals
+        if _is_pdf_garbage(doc.content):
+            logger.warning(
+                "PDF %s text appears to be PDF internal structure — "
+                "extracted %d chars but most are structural markers",
+                pdf_path, len(doc.content),
+            )
+        else:
+            logger.info(
+                "Parsed PDF %s — %d chars, %d image(s)",
+                pdf_path, len(doc.content), len(images),
+            )
 
     return doc, images
+
+
+def _is_pdf_garbage(text: str) -> bool:
+    """Heuristic: check if extracted text is mostly PDF internal structure."""
+    import re as _re
+    markers = [
+        r"\bstartxref\b", r"%%EOF", r"\b\d+\s+\d+\s+obj\b",
+        r"\bendobj\b", r"\bstream\b", r"\bendstream\b",
+        r"\bxref\b", r"\btrailer\b", r"/Type\s*/\w+",
+    ]
+    hits = sum(1 for m in markers if _re.search(m, text, _re.IGNORECASE))
+    # If 3+ PDF structural markers are found, it's likely garbage
+    return hits >= 3

@@ -39,6 +39,30 @@ _RE_MULTI_SPACES = re.compile(r"[^\S\n]+")
 _RE_MULTI_NEWLINES = re.compile(r"\n{3,}")
 _RE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# Patterns that indicate PDF internal structure leaked into extracted text
+_PDF_STRUCTURE_PATTERNS = [
+    re.compile(r"startxref", re.IGNORECASE),
+    re.compile(r"%%EOF"),
+    re.compile(r"\d+\s+\d+\s+obj\b"),
+    re.compile(r"\bendobj\b"),
+    re.compile(r"^stream$", re.IGNORECASE),
+    re.compile(r"^endstream$", re.IGNORECASE),
+    re.compile(r"^xref$", re.IGNORECASE),
+    re.compile(r"\btrailer\b", re.IGNORECASE),
+    re.compile(r"<<\s*/Type\s*/\w+"),  # PDF dictionary syntax
+    re.compile(r"/Subtype\s*/\w+"),
+    re.compile(r"/Filter\s*/\w+"),
+    re.compile(r"/Width\s+\d+"),
+    re.compile(r"/Height\s+\d+"),
+    re.compile(r"/Length\s+\d+"),
+    re.compile(r"/Root\s+\d+\s+\d+\s+R"),
+    re.compile(r"/Info\s+\d+\s+\d+\s+R"),
+    re.compile(r"/Type\s*/Page\b"),
+    re.compile(r"/Type\s*/Catalog\b"),
+    re.compile(r"/Type\s*/Font\b"),
+    re.compile(r"/Type\s*/XObject\b"),
+]
+
 
 # ── Text cleanup ─────────────────────────────────────────────────────────────
 
@@ -53,6 +77,7 @@ def normalize_text(text: str) -> str:
       4. Collapse three or more consecutive blank lines to two.
       5. Strip leading / trailing whitespace from the whole block and from
          every individual line.
+      6. Filter out lines containing PDF internal structure markers.
 
     Parameters
     ----------
@@ -79,11 +104,38 @@ def normalize_text(text: str) -> str:
     # 4 ─ Strip each line then collapse excess blank lines
     lines = text.split("\n")
     lines = [line.strip() for line in lines]
+
+    # 5 ─ Filter out PDF structure lines
+    lines = _filter_pdf_structure(lines)
+
     text = "\n".join(lines)
     text = _RE_MULTI_NEWLINES.sub("\n\n", text)
 
-    # 5 ─ Final strip
+    # 6 ─ Final strip
     return text.strip()
+
+
+def _filter_pdf_structure(lines: list[str]) -> list[str]:
+    """Remove lines that contain PDF internal structure markers.
+
+    These markers leak into extracted text when PyMuPDF reads certain
+    PDFs with XRef streams or embedded binary data.
+    """
+    filtered: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip empty lines (they'll be collapsed later)
+        if not stripped:
+            filtered.append(line)
+            continue
+        # Check if line matches any PDF structure pattern
+        if any(p.search(stripped) for p in _PDF_STRUCTURE_PATTERNS):
+            continue
+        # Skip lines that are just numbers + PDF keywords (e.g. "30354 0 obj")
+        if re.match(r"^\d+\s+\d+\s+\w+$", stripped):
+            continue
+        filtered.append(line)
+    return filtered
 
 
 # ── Type detection ───────────────────────────────────────────────────────────
