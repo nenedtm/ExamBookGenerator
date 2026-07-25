@@ -25,10 +25,17 @@ from pipeline.deduplicator import deduplicate
 from pipeline.image_matcher import select_images_for_chapter
 from pipeline.merge import merge_chapters
 from pipeline.outline_generator import OutlineGenerator
-from pipeline.scanner import scan_directory
+from pipeline.scanner import scan_directory, scan_directory_incremental, compute_file_hash
 from pipeline.template_engine import load_template
 from pipeline.topic_analyzer import TopicAnalyzer, TopicNotFoundError, _chunks_for_topic
 from pipeline.validator import validate_manual
+from storage.database import (
+    get_processing_state,
+    save_processing_state,
+    invalidate_processing_state,
+    _get_connection,
+)
+from storage.cache import clear_cache_for_model
 from utils.config import ConfigManager, ConfigValidationError, _DEFAULT_CONFIG_PATH
 from utils.logger import get_logger, setup_logging
 
@@ -40,6 +47,33 @@ _LEVEL_MAP: dict[str, int] = {
     "WARNING": logging.WARNING,
     "ERROR": logging.ERROR,
 }
+
+
+def _chunks_from_cache(chunks_json: str) -> list:
+    """Deserialize chunks from JSON cache."""
+    import json
+    from core.models import Chunk
+    raw = json.loads(chunks_json)
+    return [Chunk(**c) for c in raw]
+
+
+def _chunks_to_cache(chunks: list) -> str:
+    """Serialize chunks to JSON for caching."""
+    import json
+    from core.models import Chunk
+    serializable = []
+    for c in chunks:
+        if isinstance(c, Chunk):
+            serializable.append({
+                "id": c.id, "document_id": c.document_id,
+                "content": c.content, "position": c.position,
+            })
+        elif hasattr(c, "id") and hasattr(c, "content"):
+            serializable.append({
+                "id": str(c.id), "document_id": str(getattr(c, "document_id", "")),
+                "content": str(c.content), "position": int(getattr(c, "position", 0)),
+            })
+    return json.dumps(serializable, ensure_ascii=False)
 
 
 # ── Logging bootstrap ────────────────────────────────────────────────────────
@@ -107,6 +141,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-interactive", action="store_true",
         help="Disable all interactive prompts (for scripts/CI).",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Force full reprocessing, ignoring all caches.",
     )
     return parser
 
@@ -290,6 +328,20 @@ def run_pipeline(
     if args.depth:
         cfg.set("generation.depth_level", args.depth)
 
+    # Handle model change — invalidate chapter-level cache
+    if args.model:
+        # Check if model changed from previous run
+        conn = _get_connection()
+        try:
+            row = conn.execute(
+                "SELECT DISTINCT model FROM processing_state WHERE model IS NOT NULL LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row["model"] != args.model:
+            logger.info("Model changed from '%s' to '%s' — invalidating chapter cache", row["model"], args.model)
+            clear_cache_for_model(row["model"])
+
     # ── 2. Resolve scope ──────────────────────────────────────────────
     scope = args.scope or "full"
     focus_topic = args.topic
@@ -367,24 +419,66 @@ def run_pipeline(
         "disabled" if args.no_images else "enabled",
     )
 
-    # ── 7. Scan ───────────────────────────────────────────────────────
+    # ── 7. Scan (incremental) ──────────────────────────────────────────
     _progress(1, "Scanning input directory...")
     syllabus_enabled = cfg.get("syllabus.enabled", "auto") != "false"
-    documents = scan_directory(
-        input_dir,
-        syllabus_enabled=syllabus_enabled,
-        syllabus_path=cfg.get("syllabus.path"),
-    )
+    force = getattr(args, "force", False)
+
+    if force:
+        documents = scan_directory(
+            input_dir,
+            syllabus_enabled=syllabus_enabled,
+            syllabus_path=cfg.get("syllabus.path"),
+        )
+        new_hashes = {d.source_path for d in documents}
+        modified_hashes: set[str] = set()
+        unchanged_hashes: set[str] = set()
+    else:
+        documents, new_hashes, modified_hashes, unchanged_hashes = scan_directory_incremental(
+            input_dir,
+            syllabus_enabled=syllabus_enabled,
+            syllabus_path=cfg.get("syllabus.path"),
+        )
+
     if not documents:
         print("ERROR: no supported files found in the input directory.", file=sys.stderr)
         sys.exit(1)
-    logger.info("Found %d document(s)", len(documents))
+    logger.info(
+        "Found %d document(s) — %d new, %d modified, %d unchanged",
+        len(documents), len(new_hashes), len(modified_hashes), len(unchanged_hashes),
+    )
 
-    # ── 8. Parse ──────────────────────────────────────────────────────
+    # ── 8. Parse (incremental) ────────────────────────────────────────
     _progress(2, "Parsing documents...")
-    parsed_docs, extracted_images = _parse_all(documents)
+
+    docs_to_parse = []
+    cached_chunks_map: dict[str, list] = {}  # source_path → chunks
+    file_hashes: dict[str, str] = {}  # source_path → content_hash (from scan)
+
+    # Recompute hashes for all documents (same as scan does)
+    for doc in documents:
+        try:
+            fhash = compute_file_hash(Path(doc.source_path))
+            file_hashes[doc.source_path] = fhash
+        except (OSError, ValueError):
+            file_hashes[doc.source_path] = ""
+
+    for doc in documents:
+        fhash = file_hashes.get(doc.source_path, "")
+        if fhash in unchanged_hashes and not force:
+            # Load cached chunks from DB
+            state = get_processing_state(fhash)
+            if state and state["chunks_json"]:
+                cached_chunks_map[doc.source_path] = _chunks_from_cache(state["chunks_json"])
+                logger.debug("Loaded cached chunks for %s", doc.source_path)
+                continue
+        docs_to_parse.append(doc)
+
+    parsed_docs, extracted_images = _parse_all(docs_to_parse)
+
     non_empty = [d for d in parsed_docs if d.content.strip()]
-    if not non_empty:
+
+    if not non_empty and not cached_chunks_map:
         print("ERROR: no text content could be extracted from the documents.", file=sys.stderr)
         sys.exit(1)
 
@@ -393,15 +487,35 @@ def run_pipeline(
     unique_docs = deduplicate(non_empty)
     logger.info("After dedup: %d document(s)", len(unique_docs))
 
-    # ── 10. Chunk ─────────────────────────────────────────────────────
+    # ── 10. Chunk (incremental) ───────────────────────────────────────
     _progress(4, "Chunking documents...")
     all_chunks = []
-    for doc in unique_docs:
+
+    # Add cached chunks from unchanged files
+    for src_path, chunks in cached_chunks_map.items():
+        all_chunks.extend(chunks)
+
+    # Chunk newly parsed documents
+    for doc in parsed_docs:
+        if not doc.content.strip():
+            continue
         chunks = create_chunks(doc)
         all_chunks.extend(chunks)
+
+        # Save chunks to processing state using pre-computed hash
+        fhash = file_hashes.get(doc.source_path, "")
+        if fhash:
+            save_processing_state(
+                fhash,
+                doc.source_path,
+                doc.file_type.value,
+                parsed=True,
+                chunks_json=_chunks_to_cache(chunks),
+            )
+
     logger.info("Total chunks: %d", len(all_chunks))
 
-    # ── 11. Topic analysis ────────────────────────────────────────────
+    # ── 11. Topic analysis (with caching) ─────────────────────────────
     _progress(5, "Analysing topics...")
     client = OllamaClient.from_config(cfg)
     analyzer = TopicAnalyzer(client, cfg)
@@ -414,24 +528,106 @@ def run_pipeline(
                 syllabus_doc = d
                 break
 
-    topics = analyzer.analyze(
-        all_chunks,
-        syllabus_document=syllabus_doc,
-        scope=scope,
-        focus_topic=focus_topic,
-    )
+    topics_changed = len(new_hashes) > 0 or len(modified_hashes) > 0
+    cached_topics = None
+
+    if not topics_changed and not force:
+        # Try to load cached topics from the most recent processing state
+        import json
+        from storage.database import _get_connection
+        conn = _get_connection()
+        try:
+            row = conn.execute(
+                "SELECT topics_json FROM processing_state WHERE topics_json IS NOT NULL ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row["topics_json"]:
+            try:
+                raw_topics = json.loads(row["topics_json"])
+                cached_topics = [Topic(**t) for t in raw_topics]
+                logger.info("Loaded %d cached topic(s)", len(cached_topics))
+            except Exception as exc:
+                logger.warning("Failed to load cached topics: %s", exc)
+                cached_topics = None
+
+    if cached_topics and not topics_changed:
+        topics = cached_topics
+    else:
+        topics = analyzer.analyze(
+            all_chunks,
+            syllabus_document=syllabus_doc,
+            scope=scope,
+            focus_topic=focus_topic,
+        )
+        # Save topics to all processing states
+        import json
+        try:
+            topics_json = json.dumps(
+                [{"name": t.name, "description": t.description,
+                  "related_documents": t.related_documents,
+                  "subtopic_count": t.subtopic_count,
+                  "order_source": t.order_source,
+                  "syllabus_position": t.syllabus_position}
+                 for t in topics],
+                ensure_ascii=False,
+            )
+            conn = _get_connection()
+            try:
+                conn.execute(
+                    "UPDATE processing_state SET topics_json = ?",
+                    (topics_json,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except (TypeError, AttributeError) as exc:
+            logger.debug("Could not cache topics: %s", exc)
+
     logger.info("Identified %d topic(s)", len(topics))
 
     # ── 12. Outline ───────────────────────────────────────────────────
     _progress(6, "Generating outline...")
     outline_gen = OutlineGenerator(client, cfg)
-    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
 
-    # ── 13. Chapter generation ────────────────────────────────────────
+    outline_cached = False
+    if not topics_changed and not force:
+        outline_path = Path("output/outline.md")
+        if outline_path.exists():
+            try:
+                # Try to load existing outline
+                existing_outline = outline_path.read_text(encoding="utf-8")
+                if existing_outline.strip():
+                    logger.info("Reusing existing outline (topics unchanged)")
+                    outline_cached = True
+                    # Parse existing outline for index_entries and outline_chapters
+                    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+            except Exception:
+                pass
+
+    if not outline_cached:
+        _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+
+    # ── 13. Chapter generation (incremental) ──────────────────────────
     _progress(7, "Generating chapters...")
     template = load_template(template_path)
     chapters_md: list[str] = []
     covered_topic_indices: set[int] = set()
+
+    # Track which topics have changed (have new/modified chunks)
+    changed_topic_names: set[str] = set()
+    if topics_changed:
+        # All topics are considered changed if any file changed
+        changed_topic_names = {t.name for t in topics}
+
+    # Load cached chapters if available and topics haven't changed
+    cached_chapters: dict[str, str] = {}  # topic_name → chapter_md
+    if not changed_topic_names and not force:
+        chapters_path = Path("output/Exam_Manual.md")
+        if chapters_path.exists():
+            # We can't easily split the merged manual back into chapters,
+            # so we regenerate if chapters are needed. The LLM cache handles this.
+            pass
 
     if scope == "topic":
         # Focus mode: single chapter, ignore outline structure

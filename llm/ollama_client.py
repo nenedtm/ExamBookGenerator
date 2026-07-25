@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 
 from utils.config import ConfigManager
 from utils.logger import get_logger
+from storage.cache import save_cache, get_cache
 
 logger = get_logger(__name__)
 
@@ -79,11 +80,13 @@ class OllamaClient:
         model: str = "qwen3",
         timeout: int = 120,
         max_retries: int = 3,
+        cache_enabled: bool = True,
     ) -> None:
         self._host = host.rstrip("/")
         self._model = model
         self._timeout = timeout
         self._max_retries = max_retries
+        self._cache_enabled = cache_enabled
 
     @classmethod
     def from_config(cls, cfg: ConfigManager | None = None) -> OllamaClient:
@@ -124,6 +127,9 @@ class OllamaClient:
     ) -> str:
         """Send a prompt to Ollama and return the generated text.
 
+        Results are cached: identical prompts with the same model return
+        the cached response without invoking Ollama.
+
         Parameters
         ----------
         prompt:
@@ -135,8 +141,22 @@ class OllamaClient:
         options:
             Optional Ollama-specific options (temperature, top_p, etc.).
         """
+        effective_model = model or self._model
+        cache_key_prompt = prompt
+        if system:
+            cache_key_prompt = f"SYSTEM: {system}\n\nUSER: {prompt}"
+
+        if self._cache_enabled:
+            try:
+                cached = get_cache(cache_key_prompt, model=effective_model)
+                if cached is not None:
+                    logger.debug("LLM cache hit for generate() — model=%s", effective_model)
+                    return cached["response"]
+            except Exception:
+                pass
+
         body: dict[str, Any] = {
-            "model": model or self._model,
+            "model": effective_model,
             "prompt": prompt,
             "stream": False,
         }
@@ -146,7 +166,14 @@ class OllamaClient:
             body["options"] = options
 
         resp = self._request("/api/generate", body=body)
-        return self._extract_response_text(resp, endpoint="generate")
+        result = self._extract_response_text(resp, endpoint="generate")
+
+        if self._cache_enabled:
+            try:
+                save_cache(cache_key_prompt, result, model=effective_model)
+            except Exception:
+                pass
+        return result
 
     def chat(
         self,
@@ -157,6 +184,9 @@ class OllamaClient:
     ) -> str:
         """Send a multi-turn conversation to Ollama and return the reply.
 
+        Results are cached: identical messages with the same model return
+        the cached response without invoking Ollama.
+
         Parameters
         ----------
         messages:
@@ -166,8 +196,20 @@ class OllamaClient:
         options:
             Optional Ollama-specific options.
         """
+        effective_model = model or self._model
+
+        cache_key_prompt = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        if self._cache_enabled:
+            try:
+                cached = get_cache(cache_key_prompt, model=effective_model)
+                if cached is not None:
+                    logger.debug("LLM cache hit for chat() — model=%s", effective_model)
+                    return cached["response"]
+            except Exception:
+                pass
+
         body: dict[str, Any] = {
-            "model": model or self._model,
+            "model": effective_model,
             "messages": messages,
             "stream": False,
         }
@@ -175,7 +217,14 @@ class OllamaClient:
             body["options"] = options
 
         resp = self._request("/api/chat", body=body)
-        return self._extract_chat_text(resp)
+        result = self._extract_chat_text(resp)
+
+        if self._cache_enabled:
+            try:
+                save_cache(cache_key_prompt, result, model=effective_model)
+            except Exception:
+                pass
+        return result
 
     def generate_with_image(
         self,

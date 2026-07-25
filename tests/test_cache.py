@@ -26,14 +26,14 @@ class TestSaveCache:
     def test_retrievable(self, tmp_path: Path) -> None:
         db = _db(tmp_path)
         save_cache("test prompt", "test response", model="gpt-4", db_path=db)
-        result = get_cache("test prompt", db_path=db)
+        result = get_cache("test prompt", model="gpt-4", db_path=db)
         assert result is not None
         assert result["response"] == "test response"
 
     def test_model_preserved(self, tmp_path: Path) -> None:
         db = _db(tmp_path)
         save_cache("p", "r", model="claude-3", db_path=db)
-        result = get_cache("p", db_path=db)
+        result = get_cache("p", model="claude-3", db_path=db)
         assert result["model"] == "claude-3"
 
     def test_created_at_set(self, tmp_path: Path) -> None:
@@ -73,9 +73,17 @@ class TestOverwrite:
         db = _db(tmp_path)
         save_cache("prompt", "old", model="v1", db_path=db)
         save_cache("prompt", "new", model="v2", db_path=db)
-        result = get_cache("prompt", db_path=db)
+        # Different models → different keys → no overwrite
+        assert get_cache("prompt", model="v1", db_path=db)["response"] == "old"
+        assert get_cache("prompt", model="v2", db_path=db)["response"] == "new"
+
+    def test_same_model_overwrites(self, tmp_path: Path) -> None:
+        db = _db(tmp_path)
+        save_cache("prompt", "old", model="v1", db_path=db)
+        save_cache("prompt", "new", model="v1", db_path=db)
+        result = get_cache("prompt", model="v1", db_path=db)
         assert result["response"] == "new"
-        assert result["model"] == "v2"
+        assert result["model"] == "v1"
 
 
 class TestCountCache:
@@ -133,6 +141,14 @@ class TestEdgeCases:
         save_cache(long, "ok", db_path=db)
         result = get_cache(long, db_path=db)
         assert result["response"] == "ok"
+
+    def test_different_models_same_prompt(self, tmp_path: Path) -> None:
+        """Same prompt with different models produces different cache entries."""
+        db = _db(tmp_path)
+        save_cache("prompt", "response-a", model="model-a", db_path=db)
+        save_cache("prompt", "response-b", model="model-b", db_path=db)
+        assert get_cache("prompt", model="model-a", db_path=db)["response"] == "response-a"
+        assert get_cache("prompt", model="model-b", db_path=db)["response"] == "response-b"
 
     def test_database_auto_created(self, tmp_path: Path) -> None:
         db_path = str(tmp_path / "sub" / "dir" / "cache.db")

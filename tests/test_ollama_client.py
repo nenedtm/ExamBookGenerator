@@ -23,7 +23,7 @@ from llm.ollama_client import (
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _client(**kwargs: Any) -> OllamaClient:
-    return OllamaClient(host="http://localhost:11434", model="test-model", **kwargs)
+    return OllamaClient(host="http://localhost:11434", model="test-model", cache_enabled=False, **kwargs)
 
 
 def _mock_response(data: dict[str, Any], status: int = 200) -> MagicMock:

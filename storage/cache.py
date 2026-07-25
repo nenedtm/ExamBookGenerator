@@ -69,9 +69,14 @@ def _now_iso() -> str:
 
 # ── Hashing ──────────────────────────────────────────────────────────────────
 
-def _hash_prompt(prompt: str) -> str:
-    """Return a SHA-256 hex digest of *prompt*."""
-    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+def _hash_prompt(prompt: str, model: str = "") -> str:
+    """Return a SHA-256 hex digest of *prompt* + *model*.
+
+    Including the model ensures that switching models invalidates old
+    cached responses for the same prompt text.
+    """
+    combined = f"{model}\n{prompt}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -103,7 +108,7 @@ def save_cache(
     str
         The cache key (SHA-256 hex digest).
     """
-    key = _hash_prompt(prompt)
+    key = _hash_prompt(prompt, model)
     preview = prompt[:200].replace("\n", " ")
     now = _now_iso()
 
@@ -133,6 +138,7 @@ def save_cache(
 def get_cache(
     prompt: str,
     *,
+    model: str = "",
     db_path: Path | str | None = None,
 ) -> dict[str, str] | None:
     """Retrieve a cached LLM response.
@@ -141,6 +147,8 @@ def get_cache(
     ----------
     prompt:
         The original prompt to look up.
+    model:
+        The model name to include in the cache key.
     db_path:
         Override for the database file path.
 
@@ -150,7 +158,7 @@ def get_cache(
         ``{"response": ..., "model": ..., "created_at": ...}`` on hit,
         ``None`` on miss.
     """
-    key = _hash_prompt(prompt)
+    key = _hash_prompt(prompt, model)
 
     conn = _get_connection(db_path)
     try:
@@ -186,6 +194,7 @@ def count_cache(*, db_path: Path | str | None = None) -> int:
 def delete_cache(
     prompt: str,
     *,
+    model: str = "",
     db_path: Path | str | None = None,
 ) -> bool:
     """Remove a single cache entry.
@@ -195,7 +204,7 @@ def delete_cache(
     bool
         ``True`` if a row was deleted, ``False`` otherwise.
     """
-    key = _hash_prompt(prompt)
+    key = _hash_prompt(prompt, model)
     conn = _get_connection(db_path)
     try:
         cursor = conn.execute("DELETE FROM cache WHERE key = ?", (key,))
@@ -219,6 +228,31 @@ def clear_cache(*, db_path: Path | str | None = None) -> int:
         conn.commit()
         count = cursor.rowcount
         logger.info("Cache cleared — %d entries removed", count)
+        return count
+    finally:
+        conn.close()
+
+
+def clear_cache_for_model(
+    model: str,
+    *,
+    db_path: Path | str | None = None,
+) -> int:
+    """Delete all cache entries for a specific model.
+
+    Useful when switching models to avoid stale responses.
+
+    Returns
+    -------
+    int
+        Number of rows deleted.
+    """
+    conn = _get_connection(db_path)
+    try:
+        cursor = conn.execute("DELETE FROM cache WHERE model = ?", (model,))
+        conn.commit()
+        count = cursor.rowcount
+        logger.info("Cache cleared for model '%s' — %d entries removed", model, count)
         return count
     finally:
         conn.close()

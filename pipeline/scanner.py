@@ -6,6 +6,7 @@ an inventory of ``Document`` objects ready for the parsing stage.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -191,6 +192,134 @@ def scan_directory(
             logger.info("Syllabus document id: %s", syllabus_doc_id)
 
     return documents
+
+
+def compute_file_hash(file_path: Path) -> str:
+    """Compute a SHA-256 hash of the file content.
+
+    Parameters
+    ----------
+    file_path:
+        Path to the file.
+
+    Returns
+    -------
+    str
+        Hex digest of the file content.
+    """
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def scan_directory_incremental(
+    path: Path | str,
+    *,
+    syllabus_enabled: bool = False,
+    syllabus_path: str | None = None,
+    force: bool = False,
+) -> tuple[list[Document], set[str], set[str], set[str]]:
+    """Scan directory and classify files by processing state.
+
+    Parameters
+    ----------
+    path:
+        Root directory to scan.
+    syllabus_enabled:
+        When *True*, detect syllabus candidates.
+    syllabus_path:
+        Explicit syllabus file path.
+    force:
+        When *True*, treat all files as new (ignore cache).
+
+    Returns
+    -------
+    tuple
+        ``(all_documents, new_hashes, modified_hashes, unchanged_hashes)``
+        where each hash set contains the content_hash of files in that category.
+    """
+    from storage.database import get_all_processed_hashes
+
+    root = Path(path)
+    if not root.exists():
+        raise FileNotFoundError(f"Directory not found: {root}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {root}")
+
+    logger.info("Scanning directory (incremental): %s", root.resolve())
+
+    previously_processed = {} if force else get_all_processed_hashes()
+
+    documents: list[Document] = []
+    new_hashes: set[str] = set()
+    modified_hashes: set[str] = set()
+    unchanged_hashes: set[str] = set()
+    skipped = 0
+    syllabus_found = False
+    syllabus_doc_id: str | None = None
+
+    for entry in sorted(root.rglob("*")):
+        if not entry.is_file():
+            continue
+
+        file_type = detect_file_type(entry)
+        if file_type == FileType.UNKNOWN:
+            skipped += 1
+            continue
+
+        try:
+            content_hash = compute_file_hash(entry)
+            doc = Document(
+                source_path=str(entry),
+                file_type=file_type,
+            )
+
+            if syllabus_enabled:
+                is_syll = detect_syllabus_candidate(
+                    doc,
+                    explicit_path=syllabus_path,
+                )
+                if is_syll:
+                    doc.is_syllabus = True
+                    if not syllabus_found:
+                        syllabus_found = True
+                        syllabus_doc_id = doc.id
+                    logger.info("Syllabus candidate detected: %s", entry.name)
+
+            documents.append(doc)
+
+            prev_hash = previously_processed.get(str(entry))
+            if prev_hash is None:
+                new_hashes.add(content_hash)
+                logger.debug("NEW: %s (%s)", entry.name, file_type.value)
+            elif prev_hash == content_hash:
+                unchanged_hashes.add(content_hash)
+                logger.debug("UNCHANGED: %s (%s)", entry.name, file_type.value)
+            else:
+                modified_hashes.add(content_hash)
+                logger.debug("MODIFIED: %s (%s)", entry.name, file_type.value)
+
+        except OSError as exc:
+            logger.warning("Cannot read %s: %s", entry, exc)
+            skipped += 1
+
+    logger.info(
+        "Incremental scan complete — %d files: %d new, %d modified, %d unchanged, %d skipped",
+        len(documents),
+        len(new_hashes),
+        len(modified_hashes),
+        len(unchanged_hashes),
+        skipped,
+    )
+
+    if syllabus_enabled:
+        logger.info("Syllabus detected: %s", syllabus_found)
+        if syllabus_found:
+            logger.info("Syllabus document id: %s", syllabus_doc_id)
+
+    return documents, new_hashes, modified_hashes, unchanged_hashes
 
 
 def generate_inventory(

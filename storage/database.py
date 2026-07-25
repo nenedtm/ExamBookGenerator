@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS documents (
     updated_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_source_path ON documents(source_path);
+
+CREATE TABLE IF NOT EXISTS processing_state (
+    content_hash  TEXT PRIMARY KEY,
+    source_path   TEXT NOT NULL,
+    file_type     TEXT NOT NULL,
+    parsed        INTEGER DEFAULT 0,
+    chunks_json   TEXT,
+    topics_json   TEXT,
+    model         TEXT,
+    depth         INTEGER,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ps_source_path ON processing_state(source_path);
 """
 
 
@@ -268,5 +282,184 @@ def delete_document(
         if deleted:
             logger.debug("Deleted document: %s", source_path)
         return deleted
+    finally:
+        conn.close()
+
+
+# ── Processing State API ─────────────────────────────────────────────────────
+
+def save_processing_state(
+    content_hash: str,
+    source_path: str,
+    file_type: str,
+    *,
+    parsed: bool = True,
+    chunks_json: str | None = None,
+    topics_json: str | None = None,
+    model: str | None = None,
+    depth: int | None = None,
+    db_path: Path | str | None = None,
+) -> None:
+    """Persist the processing state for a file.
+
+    Parameters
+    ----------
+    content_hash:
+        SHA-256 of the parsed file content.
+    source_path:
+        Original file path.
+    file_type:
+        File type (pdf, docx, etc.).
+    parsed:
+        Whether the file has been successfully parsed.
+    chunks_json:
+        JSON-serialized list of chunks.
+    topics_json:
+        JSON-serialized list of topic names.
+    model:
+        Model used for LLM calls on this file.
+    depth:
+        Depth level used for generation.
+    db_path:
+        Override for the database file path.
+    """
+    now = _now_iso()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """\
+            INSERT INTO processing_state
+                (content_hash, source_path, file_type, parsed,
+                 chunks_json, topics_json, model, depth,
+                 created_at, updated_at)
+            VALUES
+                (:hash, :path, :ftype, :parsed,
+                 :chunks, :topics, :model, :depth,
+                 :ts, :ts)
+            ON CONFLICT(content_hash) DO UPDATE SET
+                source_path = excluded.source_path,
+                file_type   = excluded.file_type,
+                parsed      = excluded.parsed,
+                chunks_json = excluded.chunks_json,
+                topics_json = excluded.topics_json,
+                model       = excluded.model,
+                depth       = excluded.depth,
+                updated_at  = excluded.updated_at
+            """,
+            {
+                "hash": content_hash,
+                "path": source_path,
+                "ftype": file_type,
+                "parsed": int(parsed),
+                "chunks": chunks_json,
+                "topics": topics_json,
+                "model": model,
+                "depth": depth,
+                "ts": now,
+            },
+        )
+        conn.commit()
+        logger.debug("Saved processing state — hash=%s, path=%s", content_hash[:12], source_path)
+    finally:
+        conn.close()
+
+
+def get_processing_state(
+    content_hash: str,
+    *,
+    db_path: Path | str | None = None,
+) -> dict | None:
+    """Retrieve processing state by content hash.
+
+    Returns
+    -------
+    dict or None
+        Processing state dict, or ``None`` if not found.
+    """
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM processing_state WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return None
+
+    return {
+        "content_hash": row["content_hash"],
+        "source_path": row["source_path"],
+        "file_type": row["file_type"],
+        "parsed": bool(row["parsed"]),
+        "chunks_json": row["chunks_json"],
+        "topics_json": row["topics_json"],
+        "model": row["model"],
+        "depth": row["depth"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def get_all_processed_hashes(*, db_path: Path | str | None = None) -> dict[str, str]:
+    """Return a mapping of source_path → content_hash for all processed files.
+
+    Returns
+    -------
+    dict
+        ``{source_path: content_hash, ...}``
+    """
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT source_path, content_hash FROM processing_state"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {row["source_path"]: row["content_hash"] for row in rows}
+
+
+def invalidate_processing_state(
+    *,
+    source_path: str | None = None,
+    content_hash: str | None = None,
+    db_path: Path | str | None = None,
+) -> int:
+    """Remove processing state entries.
+
+    Parameters
+    ----------
+    source_path:
+        If provided, invalidate all entries for this file path.
+    content_hash:
+        If provided, invalidate the specific hash entry.
+    db_path:
+        Override for the database file path.
+
+    Returns
+    -------
+    int
+        Number of rows deleted.
+    """
+    conn = _get_connection(db_path)
+    try:
+        if source_path:
+            cursor = conn.execute(
+                "DELETE FROM processing_state WHERE source_path = ?",
+                (source_path,),
+            )
+        elif content_hash:
+            cursor = conn.execute(
+                "DELETE FROM processing_state WHERE content_hash = ?",
+                (content_hash,),
+            )
+        else:
+            cursor = conn.execute("DELETE FROM processing_state")
+        conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.debug("Invalidated %d processing state entries", count)
+        return count
     finally:
         conn.close()
