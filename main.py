@@ -534,7 +534,6 @@ def run_pipeline(
     if not topics_changed and not force:
         # Try to load cached topics from the most recent processing state
         import json
-        from storage.database import _get_connection
         conn = _get_connection()
         try:
             row = conn.execute(

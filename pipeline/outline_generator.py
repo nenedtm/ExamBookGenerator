@@ -293,12 +293,34 @@ class OutlineGenerator:
         # Build topic summary for the prompt
         topic_block = self._format_topics(topics)
 
+        # Detect if topics are syllabus-ordered
+        has_syllabus = any(
+            t.order_source == "syllabus" for t in topics
+        )
+
         # Query LLM
+        syllabus_note = ""
+        if has_syllabus:
+            syllabus_note = (
+                "\n\n## SYLLABUS ORDER — MANDATORY\n\n"
+                "The topics below are ordered according to an official exam "
+                "syllabus. This order is NON-NEGOTIABLE. You MUST:\n"
+                "1. Keep chapters in the EXACT same order as the topics.\n"
+                "2. Do NOT rearrange, sort, or reorganize topics based on "
+                "your own judgment.\n"
+                "3. The first topic must appear in the first chapter, the "
+                "last topic in the last chapter.\n"
+                "4. You may group consecutive related topics into one "
+                "chapter, but you must NOT split a single topic across "
+                "multiple chapters or move it to a different position.\n"
+            )
+
         prompt = build_outline_prompt() + (
-            "\n\nIMPORTANT: The topics below are already ordered (either by "
-            "syllabus position or pedagogical sequence).  Do NOT reorder "
-            "them.  You may group related topics into the same chapter, but "
-            "the relative order of topics must remain unchanged.\n\n"
+            f"\n\nThe topics below are already ordered (either by "
+            f"{'syllabus position' if has_syllabus else 'pedagogical sequence'}). "
+            f"Do NOT reorder them. You may group related topics into the same "
+            f"chapter, but the relative order of topics must remain unchanged."
+            f"{syllabus_note}\n\n"
             f"Topics:\n{topic_block}"
         )
 
