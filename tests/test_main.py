@@ -206,7 +206,7 @@ class TestRunPipeline:
             # Configure mocks
             MockClient.from_config.return_value = MagicMock()
             mock_instance = MockAnalyzer.return_value
-            mock_instance.analyze.return_value = mock_topics
+            mock_instance.analyze.return_value = (mock_topics, {})
             MockOutline.return_value.generate.return_value = ("outline", mock_entries, mock_outline_chapters)
             mock_gen_ch.return_value = ("# Chapter\n\nContent.", "Chapter", [])
             mock_validate.return_value = {

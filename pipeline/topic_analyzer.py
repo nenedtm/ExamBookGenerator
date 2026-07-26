@@ -16,7 +16,7 @@ Usage::
     from llm.ollama_client import OllamaClient
 
     analyzer = TopicAnalyzer(OllamaClient.from_config())
-    topics = analyzer.analyze(chunks, scope="full")
+    topics, chunk_id_map = analyzer.analyze(chunks, scope="full")
 """
 
 from __future__ import annotations
@@ -240,10 +240,11 @@ def _ensure_syllabus_coverage(
     syllabus_entries: list[str],
     all_chunks: list[Chunk],
 ) -> list[Topic]:
-    """Verify that every syllabus entry has a corresponding topic.
+    """Filter and enrich topics to match the syllabus exactly.
 
-    Missing entries are inserted as new ``Topic`` objects with
-    ``order_source="syllabus"`` and keyword-matched chunks.
+    1. Remove topics that don't match any syllabus entry.
+    2. Add fallback topics for syllabus entries not covered by LLM topics.
+    3. Reorder to follow syllabus order.
 
     Parameters
     ----------
@@ -258,39 +259,40 @@ def _ensure_syllabus_coverage(
     if not syllabus_entries:
         return topics
 
-    # Map existing topics to their syllabus positions
-    covered_indices: set[int] = set()
-    for t in topics:
-        if t.syllabus_position is not None and 0 <= t.syllabus_position < len(syllabus_entries):
-            covered_indices.add(t.syllabus_position)
-        else:
-            # Try to match by name
-            matched_idx = _find_syllabus_entry_for_topic(t.name, syllabus_entries)
-            if matched_idx is not None:
-                covered_indices.add(matched_idx)
+    # ── Step 1: Filter out topics not in syllabus ──────────────────────
+    matched_topics: list[tuple[Topic, int]] = []  # (topic, syllabus_idx)
+    unmatched: list[Topic] = []
 
-    # Find missing entries
+    for t in topics:
+        idx = _find_syllabus_entry_for_topic(t.name, syllabus_entries)
+        if idx is not None:
+            # Update syllabus position if not set
+            if t.syllabus_position is None:
+                t.syllabus_position = idx
+            t.order_source = "syllabus"
+            matched_topics.append((t, idx))
+        else:
+            unmatched.append(t)
+
+    if unmatched:
+        logger.info(
+            "Filtered %d topic(s) not in syllabus: %s",
+            len(unmatched),
+            [t.name for t in unmatched],
+        )
+
+    # ── Step 2: Find missing syllabus entries ─────────────────────────
+    covered_indices = {idx for _, idx in matched_topics}
     missing = [
         (idx, entry)
         for idx, entry in enumerate(syllabus_entries)
         if idx not in covered_indices
     ]
 
-    if not missing:
-        return topics
-
-    logger.warning(
-        "Syllabus coverage gap: %d/%d entries not covered by LLM topics. "
-        "Creating fallback topics.",
-        len(missing),
-        len(syllabus_entries),
-    )
-
-    # Build a name→topic index for inserting new topics in order
-    result = list(topics)
+    # ── Step 3: Create fallback topics for missing entries ─────────────
+    result: list[Topic] = [t for t, _ in matched_topics]
 
     for idx, entry in missing:
-        # Keyword-match chunks for this entry
         entry_lower = entry.lower()
         keywords = [w for w in entry_lower.split() if len(w) > 3]
         if not keywords:
@@ -310,16 +312,23 @@ def _ensure_syllabus_coverage(
             syllabus_position=idx,
         )
 
-        # Insert at the correct position based on syllabus order
-        insert_pos = len(result)
-        for i, t in enumerate(result):
-            if t.syllabus_position is not None and t.syllabus_position > idx:
-                insert_pos = i
-                break
-        result.insert(insert_pos, fallback)
+        result.append(fallback)
+        logger.info(
+            "  Fallback topic for syllabus entry %d: '%s' (%d chunks)",
+            idx, entry, len(matched_chunks),
+        )
 
-        logger.info("  Fallback topic for syllabus entry %d: '%s' (%d chunks)",
-                     idx, entry, len(matched_chunks))
+    if missing:
+        logger.warning(
+            "Syllabus coverage gap: %d/%d entries not covered by LLM topics. "
+            "Created %d fallback topics.",
+            len(missing),
+            len(syllabus_entries),
+            len(missing),
+        )
+
+    # ── Step 4: Sort by syllabus position ──────────────────────────────
+    result.sort(key=lambda t: t.syllabus_position if t.syllabus_position is not None else 999)
 
     return result
 
@@ -356,7 +365,7 @@ class TopicAnalyzer:
         scope: Literal["full", "topic"] | None = None,
         focus_topic: str | None = None,
         output_path: Path | str | None = None,
-    ) -> list[Topic]:
+    ) -> tuple[list[Topic], dict[str, list[str]]]:
         """Run topic analysis on *chunks* and return ``Topic`` objects.
 
         Parameters
@@ -378,8 +387,9 @@ class TopicAnalyzer:
 
         Returns
         -------
-        list[Topic]
-            Identified topics in the requested order.
+        tuple[list[Topic], dict[str, list[str]]]
+            Identified topics in the requested order, and a mapping of
+            topic name → list of chunk IDs for precise chunk association.
 
         Raises
         ------
@@ -390,7 +400,7 @@ class TopicAnalyzer:
         """
         if not chunks:
             logger.warning("No chunks provided to topic analyzer")
-            return []
+            return [], {}
 
         scope = scope or self._cfg.get("generation.scope", "full")
         focus_topic = focus_topic or self._cfg.get("generation.focus_topic")
@@ -461,7 +471,7 @@ class TopicAnalyzer:
             len(topics),
             scope,
         )
-        return topics
+        return topics, chunk_id_map
 
     # ── Internals ───────────────────────────────────────────────────────
 

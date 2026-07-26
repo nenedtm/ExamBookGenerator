@@ -233,8 +233,24 @@ def _parse_all(documents: list[Document]) -> tuple[list[Document], list[Extracte
 # ── Main pipeline ────────────────────────────────────────────────────────────
 
 
-def _collect_chunks_for_topic(topic: Topic, all_chunks: list) -> list:
-    """Collect all chunks relevant to a topic, with keyword fallback."""
+def _collect_chunks_for_topic(
+    topic: Topic,
+    all_chunks: list,
+    chunk_id_map: dict[str, list[str]] | None = None,
+) -> list:
+    """Collect all chunks relevant to a topic, with keyword fallback.
+
+    Uses chunk_id_map for precise matching when available, falls back to
+    document_id matching, then keyword matching.
+    """
+    # Try chunk ID-based filtering first (most precise)
+    if chunk_id_map and topic.name in chunk_id_map:
+        ids = set(chunk_id_map[topic.name])
+        matched = [c for c in all_chunks if c.id in ids]
+        if matched:
+            return matched
+
+    # Fallback: match by document_id (all chunks from related docs)
     topic_chunks = [
         c for c in all_chunks
         if c.document_id in set(topic.related_documents)
@@ -552,8 +568,9 @@ def run_pipeline(
 
     if cached_topics and not topics_changed:
         topics = cached_topics
+        chunk_id_map: dict[str, list[str]] = {}
     else:
-        topics = analyzer.analyze(
+        topics, chunk_id_map = analyzer.analyze(
             all_chunks,
             syllabus_document=syllabus_doc,
             scope=scope,
@@ -632,7 +649,7 @@ def run_pipeline(
         # Focus mode: single chapter, ignore outline structure
         for topic in topics:
             logger.info("  Generating chapter: %s", topic.name)
-            topic_chunks = _collect_chunks_for_topic(topic, all_chunks)
+            topic_chunks = _collect_chunks_for_topic(topic, all_chunks, chunk_id_map)
             topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
             chapter_md, _, _ = generate_chapter(
                 topic, topic_chunks, template,
@@ -660,7 +677,7 @@ def run_pipeline(
             all_topic_chunks = []
             all_topic_images = []
             for t in matched_topics:
-                all_topic_chunks.extend(_collect_chunks_for_topic(t, all_chunks))
+                all_topic_chunks.extend(_collect_chunks_for_topic(t, all_chunks, chunk_id_map))
                 all_topic_images.extend(_collect_images_for_topic(t, extracted_images, args.no_images))
 
             # If no topics matched, find the closest topic by name
@@ -669,7 +686,7 @@ def run_pipeline(
                 if best_topic:
                     idx = topics.index(best_topic)
                     covered_topic_indices.add(idx)
-                    all_topic_chunks.extend(_collect_chunks_for_topic(best_topic, all_chunks))
+                    all_topic_chunks.extend(_collect_chunks_for_topic(best_topic, all_chunks, chunk_id_map))
                     all_topic_images.extend(_collect_images_for_topic(best_topic, extracted_images, args.no_images))
                     matched_topics.append(best_topic)
 
@@ -711,7 +728,7 @@ def run_pipeline(
         for idx, topic in enumerate(topics):
             if idx not in covered_topic_indices:
                 logger.info("  Generating chapter for uncovered topic: %s", topic.name)
-                topic_chunks = _collect_chunks_for_topic(topic, all_chunks)
+                topic_chunks = _collect_chunks_for_topic(topic, all_chunks, chunk_id_map)
                 topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
                 chapter_md, _, _ = generate_chapter(
                     topic, topic_chunks, template,

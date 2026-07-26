@@ -102,6 +102,13 @@ def _parse_chapter_response(raw: str) -> dict[str, object]:
     if not isinstance(obj, dict):
         raise ChapterGeneratorError(f"Expected JSON object, got {type(obj)}")
 
+    # Check if the LLM returned an error response
+    if "error" in obj:
+        error_msg = str(obj["error"])
+        raise ChapterGeneratorError(
+            f"LLM returned an error instead of chapter content: {error_msg}"
+        )
+
     for key in ("title", "content"):
         if key not in obj or not str(obj[key]).strip():
             raise ChapterGeneratorError(
@@ -119,12 +126,12 @@ def _parse_chapter_response(raw: str) -> dict[str, object]:
 def _has_meaningful_content(content: str) -> bool:
     """Check whether *content* contains body text beyond headings.
 
-    Returns ``False`` when the content consists only of Markdown headings
-    (``#``, ``##``, ``###``), horizontal rules, or blank lines.
+    Returns ``True`` when the content has at least a few lines of actual
+    prose (not just headings, rules, or blank lines).
     """
+    body_lines = 0
     for line in content.split("\n"):
         stripped = line.strip()
-        # Skip blank lines, headings, horizontal rules, blockquotes, chunk refs
         if not stripped:
             continue
         if re.match(r"^#{1,6}\s", stripped):
@@ -135,8 +142,10 @@ def _has_meaningful_content(content: str) -> bool:
             continue
         if stripped.startswith("[Chunk"):
             continue
-        # Found a line with actual body text
-        return True
+        # Count lines with actual body text
+        body_lines += 1
+        if body_lines >= 3:
+            return True
     return False
 
 
@@ -362,11 +371,13 @@ def generate_chapter(
         topic.name, scope, depth_level, len(chunks), num_predict,
     )
     parsed = None
+    last_raw = ""
     for attempt in range(5):
         raw_response = client.generate(
             prompt,
             options={"num_predict": num_predict},
         )
+        last_raw = raw_response
         try:
             parsed = _parse_chapter_response(raw_response)
             # Verify the content has actual body text, not just headings
@@ -383,6 +394,29 @@ def generate_chapter(
 
         if attempt < 4:
             num_predict = int(num_predict * 1.5)
+            # Build feedback about what went wrong
+            feedback_parts = []
+            if parsed is None:
+                feedback_parts.append(
+                    "The JSON was invalid or missing required keys."
+                )
+            else:
+                content_len = len(str(parsed.get("content", "")))
+                feedback_parts.append(
+                    f"The content field was too short ({content_len} chars) "
+                    f"and contained only headings without body paragraphs."
+                )
+            feedback = (
+                "\n\n## CRITICAL ERROR IN PREVIOUS ATTEMPT\n\n"
+                + " ".join(feedback_parts) + "\n"
+                "You MUST write 4-5 SUBSTANTIAL PARAGRAPHS of body text "
+                "under EVERY section heading. Each paragraph must be at "
+                "least 3-4 sentences long. Do NOT output empty sections "
+                "or sections with only headings.\n"
+                "Re-output the COMPLETE corrected JSON with full content."
+            )
+            prompt_with_feedback = prompt + feedback
+            prompt = prompt_with_feedback
             logger.warning(
                 "Chapter generation failed for '%s' (attempt %d), "
                 "retrying with num_predict=%d",

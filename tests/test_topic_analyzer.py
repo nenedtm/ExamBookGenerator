@@ -186,7 +186,7 @@ class TestTopicAnalyzerFull:
         mock_client.generate.return_value = _llm_topics_response()
 
         analyzer = TopicAnalyzer(mock_client)
-        topics = analyzer.analyze(
+        topics, chunk_id_map = analyzer.analyze(
             _chunks(),
             syllabus_document=_syllabus_doc(),
             output_path=tmp_path / "topics.json",
@@ -203,7 +203,7 @@ class TestTopicAnalyzerFull:
         mock_client.generate.return_value = _llm_topics_response()
 
         analyzer = TopicAnalyzer(mock_client)
-        topics = analyzer.analyze(
+        topics, chunk_id_map = analyzer.analyze(
             _chunks(),
             syllabus_document=None,
             output_path=tmp_path / "topics.json",
@@ -229,8 +229,9 @@ class TestTopicAnalyzerFull:
     def test_empty_chunks_returns_empty(self, tmp_path: Path) -> None:
         mock_client = MagicMock()
         analyzer = TopicAnalyzer(mock_client)
-        topics = analyzer.analyze([], output_path=tmp_path / "topics.json")
+        topics, chunk_id_map = analyzer.analyze([], output_path=tmp_path / "topics.json")
         assert topics == []
+        assert chunk_id_map == {}
         mock_client.generate.assert_not_called()
 
 
@@ -242,7 +243,7 @@ class TestTopicAnalyzerFocus:
         mock_client.generate.return_value = _llm_topics_response()
 
         analyzer = TopicAnalyzer(mock_client)
-        topics = analyzer.analyze(
+        topics, chunk_id_map = analyzer.analyze(
             _chunks(),
             scope="topic",
             focus_topic="Linear Algebra",
@@ -259,7 +260,7 @@ class TestTopicAnalyzerFocus:
         mock_client.generate.return_value = _llm_topics_response()
 
         analyzer = TopicAnalyzer(mock_client)
-        topics = analyzer.analyze(
+        topics, chunk_id_map = analyzer.analyze(
             _chunks(),
             scope="topic",
             focus_topic="Calculus",  # substring of "Calculus"
@@ -336,7 +337,7 @@ class TestTopicAnalyzerConfig:
         }.get(key, default)
 
         analyzer = TopicAnalyzer(mock_client, cfg=mock_cfg)
-        topics = analyzer.analyze(_chunks(), output_path=tmp_path / "topics.json")
+        topics, chunk_id_map = analyzer.analyze(_chunks(), output_path=tmp_path / "topics.json")
 
         assert len(topics) == 1
         assert topics[0].name == "Linear Algebra"

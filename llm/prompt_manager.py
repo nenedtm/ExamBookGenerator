@@ -338,15 +338,16 @@ def build_outline_prompt() -> str:
         "(either by syllabus position or pedagogical sequence).  Your "
         "task is to produce a DETAILED, HIERARCHICAL chapter outline.\n\n"
         f"{_ALWAYS_ENGLISH}\n\n"
-        "## RULES\n\n"
-        "1. **Do NOT reorder the topics.** Respect the exact sequence as given. "
-        "You may group related topics into the same chapter if that makes "
-        "pedagogical sense, but the relative order must remain unchanged.\n"
-        "2. **Every topic MUST appear in the outline.** No topic may be "
-        "silently dropped.\n"
-        "3. **Every chapter must have at least 4-6 sub-sections.** A chapter "
-        "with only a title and no sections is not acceptable. Each section "
-        "should be specific enough to fill 4-6 paragraphs of content.\n"
+        "## CRITICAL RULES — VIOLATION = FAILURE\n\n"
+        "1. **DO NOT REORDER THE TOPICS.** The topics are listed below in "
+        "their EXACT required order. You MUST preserve this order. Topics "
+        "must appear in chapters in the same sequence as the numbered list. "
+        "You may group CONSECUTIVE related topics into one chapter, but you "
+        "must NEVER move a topic before or after topics it was not adjacent to.\n"
+        "2. **EVERY TOPIC MUST APPEAR.** Check each topic off as you include it. "
+        "If a topic is missing, the output is invalid.\n"
+        "3. **EVERY CHAPTER MUST HAVE 4-6 SUB-SECTIONS.** A chapter with fewer "
+        "than 4 sections is invalid.\n"
         "4. **Sub-sections must be specific and descriptive.** Instead of "
         "\"Overview\", write \"Definition and Fundamental Properties\". "
         "Instead of \"Details\", write \"Derivation of the Master Equation\". "
@@ -364,12 +365,24 @@ def build_outline_prompt() -> str:
         "8. **Include practical sections.** Each chapter should have at "
         "least one section dedicated to worked examples, and at least one "
         "section addressing common pitfalls or exam strategies.\n\n"
+        "## OUTPUT FORMAT\n\n"
         "Return a JSON object with the key \"chapters\" containing a list "
         "of objects, each with:\n"
         "- \"title\" (string): the chapter heading (concise but descriptive).\n"
         "- \"sections\" (list of strings): the sub-section headings within "
         "this chapter. Each entry is a string. Minimum 4 entries per "
         "chapter.\n\n"
+        "Example: if topics are [\"Linear Algebra\", \"Calculus\", \"Probability\"], "
+        "a valid output is:\n"
+        '{"chapters": [{"title": "Linear Algebra", '
+        '"sections": ["Vector Spaces", "Matrix Operations", '
+        '"Eigenvalues and Eigenvectors", "Linear Transformations"]}, '
+        '{"title": "Calculus", '
+        '"sections": ["Limits and Continuity", "Differentiation", '
+        '"Integration", "Series and Sequences"]}, '
+        '{"title": "Probability", '
+        '"sections": ["Sample Spaces", "Random Variables", '
+        '"Probability Distributions", "Expectation and Variance"]}]}\n\n'
         "Output ONLY the JSON object, no markdown fences, no commentary."
     )
 

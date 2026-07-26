@@ -97,10 +97,40 @@ def _parse_outline_response(raw: str) -> list[dict[str, object]]:
 
     chapters = obj.get("chapters")
     if not isinstance(chapters, list):
+        # Try case-insensitive fallback (LLMs sometimes capitalize keys)
+        if isinstance(obj, dict):
+            for key in obj:
+                if key.lower() == "chapters" and isinstance(obj[key], list):
+                    chapters = obj[key]
+                    break
+    if not isinstance(chapters, list):
+        # Check if the LLM returned an error response
+        if isinstance(obj, dict) and "error" in obj:
+            error_msg = str(obj["error"])
+            raise OutlineGeneratorError(
+                f"LLM returned an error instead of outline: {error_msg}"
+            )
         raise OutlineGeneratorError(
             f"LLM JSON is missing the 'chapters' array.  "
             f"Keys present: {list(obj.keys()) if isinstance(obj, dict) else type(obj)}"
         )
+
+    # Normalize sections: LLMs sometimes return [{title, content}] instead of strings
+    for ch in chapters:
+        if not isinstance(ch, dict):
+            continue
+        sections = ch.get("sections")
+        if not isinstance(sections, list):
+            continue
+        normalized: list[str] = []
+        for s in sections:
+            if isinstance(s, str):
+                normalized.append(s.strip())
+            elif isinstance(s, dict):
+                title = str(s.get("title", "")).strip()
+                if title:
+                    normalized.append(title)
+        ch["sections"] = normalized
 
     return chapters  # type: ignore[no-any-return]
 
@@ -216,6 +246,65 @@ def _match_chapter_to_topics(
     return matched
 
 
+def _validate_outline(
+    raw_chapters: list[dict[str, object]],
+    topics: list[Topic],
+    has_syllabus: bool,
+) -> tuple[bool, list[str]]:
+    """Validate that the outline covers all topics in correct order.
+
+    Returns
+    -------
+    tuple[bool, list[str]]
+        (is_valid, list of warning messages).
+    """
+    warnings: list[str] = []
+
+    # Build topic-to-chapter mapping
+    topic_chapter_map: dict[int, int] = {}
+    for ch_idx, ch in enumerate(raw_chapters):
+        title = str(ch.get("title", "")).strip()
+        sections_raw = ch.get("sections", [])
+        sections: list[str] = []
+        if isinstance(sections_raw, list):
+            sections = [str(s).strip() for s in sections_raw if str(s).strip()]
+
+        matched_topics = _match_chapter_to_topics(title, sections, topics)
+        for topic_idx in matched_topics:
+            if topic_idx not in topic_chapter_map:
+                topic_chapter_map[topic_idx] = ch_idx
+
+    # Check all topics are covered
+    missing: list[int] = []
+    for idx in range(len(topics)):
+        if idx not in topic_chapter_map:
+            missing.append(idx)
+
+    if missing:
+        missing_names = [topics[i].name for i in missing]
+        warnings.append(
+            f"Missing topics in outline: {', '.join(missing_names)}"
+        )
+
+    # Check order if syllabus
+    if has_syllabus and len(missing) == 0:
+        chapter_order = []
+        for idx in range(len(topics)):
+            if idx in topic_chapter_map:
+                chapter_order.append(topic_chapter_map[idx])
+
+        # Verify order is non-decreasing
+        for i in range(1, len(chapter_order)):
+            if chapter_order[i] < chapter_order[i - 1]:
+                warnings.append(
+                    f"Topic order violated: topic '{topics[i].name}' "
+                    f"appears before '{topics[i - 1].name}'"
+                )
+                break
+
+    return len(warnings) == 0, warnings
+
+
 # ── Markdown renderer ─────────────────────────────────────────────────────────
 
 
@@ -302,17 +391,27 @@ class OutlineGenerator:
         syllabus_note = ""
         if has_syllabus:
             syllabus_note = (
-                "\n\n## SYLLABUS ORDER — MANDATORY\n\n"
-                "The topics below are ordered according to an official exam "
-                "syllabus. This order is NON-NEGOTIABLE. You MUST:\n"
-                "1. Keep chapters in the EXACT same order as the topics.\n"
-                "2. Do NOT rearrange, sort, or reorganize topics based on "
-                "your own judgment.\n"
-                "3. The first topic must appear in the first chapter, the "
-                "last topic in the last chapter.\n"
-                "4. You may group consecutive related topics into one "
-                "chapter, but you must NOT split a single topic across "
-                "multiple chapters or move it to a different position.\n"
+                "\n\n## SYLLABUS ORDER — MANDATORY — NON-NEGOTIABLE\n\n"
+                "The topics below are listed in the EXACT order of an official "
+                "exam syllabus. This order is FINAL and MUST be preserved.\n\n"
+                "RULES FOR SYLLABUS ORDER:\n"
+                "1. Chapter 1 MUST contain Topic 1.\n"
+                "2. The LAST chapter MUST contain the LAST topic.\n"
+                "3. If you group topics into one chapter, they MUST be "
+                "CONSECUTIVE topics from the list (e.g., topics 3, 4, 5).\n"
+                "4. You MUST NEVER move a topic to a position before topics "
+                "that originally preceded it.\n"
+                "5. You MUST NEVER skip a topic — every numbered topic must "
+                "appear in the output.\n\n"
+                "VIOLATION EXAMPLES (WRONG):\n"
+                "- Moving 'Calculus' before 'Algebra' if Algebra is listed first\n"
+                "- Skipping topic 3 and including topics 1, 2, 4, 5\n"
+                "- Putting topic 5 in chapter 2 and topic 2 in chapter 3\n\n"
+                "VALID EXAMPLE (CORRECT):\n"
+                "If topics are [Algebra, Calculus, Probability], valid outputs:\n"
+                "- [{Algebra chapters}, {Calculus chapters}, {Probability chapters}]\n"
+                "- [{Algebra+Calculus chapters}, {Probability chapters}]\n"
+                "- [{Algebra chapters}, {Calculus+Probability chapters}]\n"
             )
 
         prompt = build_outline_prompt() + (
@@ -330,6 +429,9 @@ class OutlineGenerator:
             scope,
         )
         num_predict = 8192
+        raw_chapters = None
+        validation_warnings: list[str] = []
+
         for attempt in range(3):
             raw_response = self._client.generate(
                 prompt,
@@ -337,7 +439,6 @@ class OutlineGenerator:
             )
             try:
                 raw_chapters = _parse_outline_response(raw_response)
-                break
             except OutlineGeneratorError:
                 if attempt < 2:
                     num_predict *= 2
@@ -346,8 +447,48 @@ class OutlineGenerator:
                         "retrying with num_predict=%d",
                         attempt + 1, num_predict,
                     )
+                    continue
                 else:
                     raise
+
+            # Validate outline covers all topics in correct order
+            is_valid, warnings = _validate_outline(raw_chapters, topics, has_syllabus)
+            if is_valid:
+                break
+
+            validation_warnings = warnings
+            if attempt < 2:
+                # Append validation feedback to prompt for next attempt
+                feedback = (
+                    "\n\n## CRITICAL ERRORS IN PREVIOUS OUTLINE\n\n"
+                    "Your outline had the following problems:\n"
+                )
+                for w in warnings:
+                    feedback += f"- {w}\n"
+                feedback += (
+                    "\nYou MUST fix ALL issues above. "
+                    "Re-output the complete corrected JSON outline."
+                )
+                prompt_with_feedback = prompt + feedback
+                prompt = prompt_with_feedback
+                num_predict *= 2
+                logger.warning(
+                    "Outline validation failed (attempt %d): %s, "
+                    "retrying with feedback",
+                    attempt + 1, "; ".join(warnings),
+                )
+            else:
+                logger.warning(
+                    "Outline validation failed after %d attempts: %s. "
+                    "Proceeding with best available outline.",
+                    attempt + 1, "; ".join(warnings),
+                )
+
+        # Should never happen, but satisfy type checker
+        if raw_chapters is None:
+            raise OutlineGeneratorError(
+                "Outline generation failed: no valid response from LLM"
+            )
 
         # Build IndexEntry list
         entries = _build_entries(raw_chapters)
