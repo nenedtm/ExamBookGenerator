@@ -428,7 +428,7 @@ class OutlineGenerator:
             len(topics),
             scope,
         )
-        num_predict = 8192
+        num_predict = 16384
         raw_chapters = None
         validation_warnings: list[str] = []
 
