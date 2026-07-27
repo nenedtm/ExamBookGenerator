@@ -402,3 +402,162 @@ class TestTopicAnalyzerErrors:
         analyzer = TopicAnalyzer(mock_client)
         with pytest.raises(TopicAnalyzerError, match="missing the 'topics' array"):
             analyzer.analyze(_chunks(), output_path=tmp_path / "topics.json")
+
+
+# ── Syllabus coverage: missing and extra topics ──────────────────────────────
+
+class TestSyllabusCoverage:
+    def test_missing_topic_marked_when_no_chunks(self, tmp_path: Path) -> None:
+        """Syllabus entry with no matching chunks gets missing_from_notes=True."""
+        # LLM only finds "Linear Algebra" but syllabus has 3 entries
+        llm_response = json.dumps({
+            "topics": [
+                {
+                    "name": "Linear Algebra",
+                    "description": "Vector spaces",
+                    "related_documents": ["doc_a"],
+                    "chunk_ids": ["c1", "c2"],
+                    "subtopic_count": 2,
+                    "order_source": "syllabus",
+                    "syllabus_position": 0,
+                },
+            ]
+        })
+        syllabus = Document(
+            id="syl1",
+            title="Syllabus",
+            content="1. Linear Algebra\n2. Probability\n3. Statistics",
+            is_syllabus=True,
+        )
+
+        mock_client = MagicMock()
+        mock_client.generate.return_value = llm_response
+
+        analyzer = TopicAnalyzer(mock_client)
+        topics, _ = analyzer.analyze(
+            _chunks(),
+            syllabus_document=syllabus,
+            output_path=tmp_path / "topics.json",
+        )
+
+        assert len(topics) == 3
+        # Linear Algebra: matched, not missing
+        assert topics[0].name == "Linear Algebra"
+        assert topics[0].missing_from_notes is False
+        # Probability: no matching chunks → missing
+        assert topics[1].name == "Probability"
+        assert topics[1].missing_from_notes is True
+        # Statistics: no matching chunks → missing
+        assert topics[2].name == "Statistics"
+        assert topics[2].missing_from_notes is True
+
+    def test_extra_topic_appended_at_end(self, tmp_path: Path) -> None:
+        """LLM topics not matching any syllabus entry are appended at end."""
+        # LLM finds "Linear Algebra", "Calculus", and "Quantum Physics"
+        # but syllabus only has "Linear Algebra" and "Calculus"
+        llm_response = json.dumps({
+            "topics": [
+                {
+                    "name": "Linear Algebra",
+                    "description": "Vector spaces",
+                    "related_documents": ["doc_a"],
+                    "chunk_ids": ["c1", "c2"],
+                    "subtopic_count": 2,
+                    "order_source": "syllabus",
+                    "syllabus_position": 0,
+                },
+                {
+                    "name": "Calculus",
+                    "description": "Derivatives and integrals",
+                    "related_documents": ["doc_b"],
+                    "chunk_ids": ["c3", "c4"],
+                    "subtopic_count": 2,
+                    "order_source": "syllabus",
+                    "syllabus_position": 1,
+                },
+                {
+                    "name": "Quantum Physics",
+                    "description": "Quantum mechanics basics",
+                    "related_documents": ["doc_c"],
+                    "chunk_ids": ["c5"],
+                    "subtopic_count": 1,
+                    "order_source": "pedagogical",
+                    "syllabus_position": None,
+                },
+            ]
+        })
+        syllabus = Document(
+            id="syl1",
+            title="Syllabus",
+            content="1. Linear Algebra\n2. Calculus",
+            is_syllabus=True,
+        )
+
+        mock_client = MagicMock()
+        mock_client.generate.return_value = llm_response
+
+        analyzer = TopicAnalyzer(mock_client)
+        topics, _ = analyzer.analyze(
+            _chunks(),
+            syllabus_document=syllabus,
+            output_path=tmp_path / "topics.json",
+        )
+
+        # Syllabus topics first, extra at end
+        assert len(topics) == 3
+        assert topics[0].name == "Linear Algebra"
+        assert topics[0].extra_in_notes is False
+        assert topics[1].name == "Calculus"
+        assert topics[1].extra_in_notes is False
+        assert topics[2].name == "Quantum Physics"
+        assert topics[2].extra_in_notes is True
+
+    def test_syllabus_order_preserved(self, tmp_path: Path) -> None:
+        """Syllabus topics appear in syllabus order, not LLM order."""
+        # LLM returns Calculus first, Linear Algebra second
+        llm_response = json.dumps({
+            "topics": [
+                {
+                    "name": "Calculus",
+                    "description": "Derivatives",
+                    "related_documents": ["doc_b"],
+                    "chunk_ids": ["c3", "c4"],
+                    "subtopic_count": 2,
+                    "order_source": "syllabus",
+                    "syllabus_position": 1,
+                },
+                {
+                    "name": "Linear Algebra",
+                    "description": "Vector spaces",
+                    "related_documents": ["doc_a"],
+                    "chunk_ids": ["c1", "c2"],
+                    "subtopic_count": 2,
+                    "order_source": "syllabus",
+                    "syllabus_position": 0,
+                },
+            ]
+        })
+        syllabus = Document(
+            id="syl1",
+            title="Syllabus",
+            content="1. Linear Algebra\n2. Calculus",
+            is_syllabus=True,
+        )
+
+        mock_client = MagicMock()
+        mock_client.generate.return_value = llm_response
+
+        analyzer = TopicAnalyzer(mock_client)
+        topics, _ = analyzer.analyze(
+            _chunks(),
+            syllabus_document=syllabus,
+            output_path=tmp_path / "topics.json",
+        )
+
+        assert len(topics) == 2
+        # Linear Algebra (position 0) should come first
+        assert topics[0].name == "Linear Algebra"
+        assert topics[0].syllabus_position == 0
+        # Calculus (position 1) should come second
+        assert topics[1].name == "Calculus"
+        assert topics[1].syllabus_position == 1

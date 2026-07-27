@@ -84,6 +84,8 @@ def _build_topic(raw: dict[str, object], order: int) -> Topic:
         subtopic_count=int(raw.get("subtopic_count", 0)),
         order_source=raw.get("order_source", "pedagogical"),  # type: ignore[arg-type]
         syllabus_position=raw.get("syllabus_position"),  # type: ignore[assignment]
+        missing_from_notes=bool(raw.get("missing_from_notes", False)),
+        extra_in_notes=bool(raw.get("extra_in_notes", False)),
     )
 
 
@@ -242,9 +244,10 @@ def _ensure_syllabus_coverage(
 ) -> list[Topic]:
     """Filter and enrich topics to match the syllabus exactly.
 
-    1. Remove topics that don't match any syllabus entry.
+    1. Remove topics that don't match any syllabus entry (mark as extra).
     2. Add fallback topics for syllabus entries not covered by LLM topics.
-    3. Reorder to follow syllabus order.
+    3. Mark fallback topics with no source chunks as ``missing_from_notes``.
+    4. Reorder to follow syllabus order, extras appended at the end.
 
     Parameters
     ----------
@@ -272,12 +275,12 @@ def _ensure_syllabus_coverage(
             t.order_source = "syllabus"
             matched_topics.append((t, idx))
         else:
+            t.extra_in_notes = True
             unmatched.append(t)
 
     if unmatched:
         logger.info(
-            "Filtered %d topic(s) not in syllabus: %s",
-            len(unmatched),
+            "Topics not in syllabus (will be appended at the end): %s",
             [t.name for t in unmatched],
         )
 
@@ -303,6 +306,8 @@ def _ensure_syllabus_coverage(
         ]
         related_docs = list({c.document_id for c in matched_chunks})
 
+        has_notes = len(matched_chunks) > 0
+
         fallback = Topic(
             name=entry,
             description=entry,
@@ -310,25 +315,48 @@ def _ensure_syllabus_coverage(
             subtopic_count=0,
             order_source="syllabus",
             syllabus_position=idx,
+            missing_from_notes=not has_notes,
         )
 
         result.append(fallback)
         logger.info(
-            "  Fallback topic for syllabus entry %d: '%s' (%d chunks)",
-            idx, entry, len(matched_chunks),
+            "  Fallback topic for syllabus entry %d: '%s' (%d chunks, missing_from_notes=%s)",
+            idx, entry, len(matched_chunks), not has_notes,
         )
 
     if missing:
+        missing_no_notes = sum(
+            1 for idx, _ in missing
+            if not any(
+                c.content.lower().split()  # quick check
+                for c in all_chunks
+                if any(
+                    w in c.content.lower()
+                    for w in syllabus_entries[idx].lower().split()
+                    if len(w) > 3
+                )
+            )
+        )
         logger.warning(
             "Syllabus coverage gap: %d/%d entries not covered by LLM topics. "
-            "Created %d fallback topics.",
+            "Created %d fallback topics (%d missing from notes).",
             len(missing),
             len(syllabus_entries),
             len(missing),
+            missing_no_notes,
         )
 
-    # ── Step 4: Sort by syllabus position ──────────────────────────────
+    # ── Step 4: Sort by syllabus position, extras at end ──────────────
     result.sort(key=lambda t: t.syllabus_position if t.syllabus_position is not None else 999)
+
+    # Append extra topics (not in syllabus) at the end
+    if unmatched:
+        result.extend(unmatched)
+        logger.info(
+            "Appended %d extra topic(s) not in syllabus at the end: %s",
+            len(unmatched),
+            [t.name for t in unmatched],
+        )
 
     return result
 
@@ -418,7 +446,7 @@ class TopicAnalyzer:
 
         # Topic lists can be long — start with a generous token budget
         # and retry with a larger one if the JSON is truncated.
-        num_predict = 16384
+        num_predict = 32768
         for attempt in range(3):
             raw_response = self._client.generate(
                 prompt,
@@ -644,6 +672,8 @@ class TopicAnalyzer:
                     "order_source": t.order_source,
                     "syllabus_position": t.syllabus_position,
                     "subtopic_count": t.subtopic_count,
+                    "missing_from_notes": t.missing_from_notes,
+                    "extra_in_notes": t.extra_in_notes,
                 }
                 for idx, t in enumerate(topics)
             ]

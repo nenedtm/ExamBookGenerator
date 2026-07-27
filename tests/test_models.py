@@ -224,6 +224,22 @@ class TestTopicV3:
         topic = Topic(name="Algebra")
         assert topic.syllabus_position is None
 
+    def test_missing_from_notes_default_false(self) -> None:
+        topic = Topic(name="Algebra")
+        assert topic.missing_from_notes is False
+
+    def test_missing_from_notes_can_set_true(self) -> None:
+        topic = Topic(name="Algebra", missing_from_notes=True)
+        assert topic.missing_from_notes is True
+
+    def test_extra_in_notes_default_false(self) -> None:
+        topic = Topic(name="Algebra")
+        assert topic.extra_in_notes is False
+
+    def test_extra_in_notes_can_set_true(self) -> None:
+        topic = Topic(name="Algebra", extra_in_notes=True)
+        assert topic.extra_in_notes is True
+
 
 # ── v3: Chapter.toc_entries ─────────────────────────────────────────────────
 

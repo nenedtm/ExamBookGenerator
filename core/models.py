@@ -164,6 +164,8 @@ class Topic:
     subtopic_count: int = 0
     order_source: Literal["syllabus", "pedagogical", "manual"] = "pedagogical"
     syllabus_position: int | None = None
+    missing_from_notes: bool = False
+    extra_in_notes: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:

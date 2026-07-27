@@ -355,6 +355,39 @@ def generate_chapter(
 
     candidate_images = candidate_images or []
 
+    # ── Placeholder for topics missing from notes ──────────────────────
+    if topic.missing_from_notes:
+        logger.info(
+            "Topic '%s' has no source material — generating placeholder chapter",
+            topic.name,
+        )
+        title = topic.name
+        content = (
+            f"## {title}\n\n"
+            f"> **Note:** This topic is part of the exam syllabus but no "
+            f"matching content was found in the provided notes. "
+            f"Please refer to the official course material or textbook "
+            f"for this topic.\n\n"
+            f"### Topics to study\n\n"
+            f"{topic.description or title}\n"
+        )
+        sections = ["Topics to study"]
+
+        chapter_entries = index_entries or _build_chapter_index(title, sections)
+        chapter_md = apply_template(
+            template,
+            title=title,
+            content=content,
+            index_entries=chapter_entries,
+            images=[],
+            include_toc=True,
+        )
+        logger.info(
+            "Placeholder chapter '%s' generated (no source material)",
+            title,
+        )
+        return chapter_md, title, []
+
     # ── Build prompt ───────────────────────────────────────────────────
     if scope == "topic":
         prompt = build_focus_topic_prompt(topic.name, chunks, depth_level)
@@ -433,6 +466,15 @@ def generate_chapter(
     content = str(parsed["content"]).strip()
     content = _clean_content(content)
     sections: list[str] = parsed.get("sections", [])  # type: ignore[assignment]
+
+    # ── Extra-in-notes banner ──────────────────────────────────────────
+    if topic.extra_in_notes:
+        extra_note = (
+            "> **Note:** This topic was found in the notes but is not part "
+            "of the official exam syllabus. It is included here for "
+            "completeness.\n\n"
+        )
+        content = extra_note + content
 
     # ── Index entries ──────────────────────────────────────────────────
     if index_entries is None:

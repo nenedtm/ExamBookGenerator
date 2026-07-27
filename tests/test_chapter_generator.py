@@ -416,6 +416,58 @@ class TestGenerateChapterErrors:
         assert img_ids == []
 
 
+# ── generate_chapter — missing_from_notes placeholder ────────────────────────
+
+class TestGenerateChapterMissing:
+    def test_placeholder_chapter_for_missing_topic(self) -> None:
+        client = _mock_client()
+        topic = _make_topic()
+        topic.missing_from_notes = True
+        chunks = _make_chunks()  # chunks exist but topic is marked missing
+
+        md, title, img_ids = generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full", client=client,
+        )
+
+        # Should NOT call the LLM
+        client.generate.assert_not_called()
+        # Should return a placeholder
+        assert title == "Linear Algebra"
+        assert "no matching content was found" in md.lower()
+        assert "Linear Algebra" in md
+        assert img_ids == []
+
+    def test_placeholder_uses_description(self) -> None:
+        client = _mock_client()
+        topic = _make_topic(description="Vector spaces and linear transformations")
+        topic.missing_from_notes = True
+
+        md, title, _ = generate_chapter(
+            topic, [], SIMPLE_TEMPLATE,
+            depth_level=5, scope="full", client=client,
+        )
+
+        assert "Vector spaces and linear transformations" in md
+
+    def test_extra_in_notes_adds_banner(self) -> None:
+        client = _mock_client()
+        topic = _make_topic()
+        topic.extra_in_notes = True
+        chunks = _make_chunks()
+
+        md, title, img_ids = generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full", client=client,
+        )
+
+        # LLM should be called (not a placeholder)
+        client.generate.assert_called_once()
+        assert title == "Linear Algebra"
+        assert "not part of the official exam syllabus" in md.lower()
+        assert img_ids == []
+
+
 # ── Integration: full end-to-end ─────────────────────────────────────────────
 
 class TestIntegration:

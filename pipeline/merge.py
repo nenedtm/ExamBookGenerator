@@ -314,8 +314,45 @@ def _merge_full(
     parts.append("---")
     parts.append("")
 
+    # Determine where extra chapters begin
+    has_extras = any(
+        getattr(t, "extra_in_notes", False) for t in (topics or [])
+    )
+    extra_separator_added = False
+
+    # Build a lookup for extra topics by name (for title-based matching)
+    extra_topic_names: set[str] = set()
+    if topics:
+        for t in topics:
+            if getattr(t, "extra_in_notes", False):
+                extra_topic_names.add(t.name.lower().strip())
+
     # Chapters with separators
-    for md in processed_chapters:
+    for idx, md in enumerate(processed_chapters):
+        # Add separator before first extra chapter
+        if has_extras and not extra_separator_added:
+            chapter_title = _extract_title(md).lower().strip()
+            is_extra = chapter_title in extra_topic_names
+            if not is_extra:
+                # Fuzzy: check if chapter title is contained in any extra topic name
+                for ename in extra_topic_names:
+                    if ename in chapter_title or chapter_title in ename:
+                        is_extra = True
+                        break
+            if is_extra:
+                parts.append("---")
+                parts.append("")
+                parts.append("## Additional Topics (not in syllabus)")
+                parts.append("")
+                parts.append(
+                    "The following chapters cover topics found in the notes "
+                    "but not included in the official exam syllabus."
+                )
+                parts.append("")
+                parts.append("---")
+                parts.append("")
+                extra_separator_added = True
+
         parts.append(md.strip())
         parts.append("")
         parts.append("---")

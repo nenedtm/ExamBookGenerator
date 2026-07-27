@@ -584,7 +584,9 @@ def run_pipeline(
                   "related_documents": t.related_documents,
                   "subtopic_count": t.subtopic_count,
                   "order_source": t.order_source,
-                  "syllabus_position": t.syllabus_position}
+                  "syllabus_position": t.syllabus_position,
+                  "missing_from_notes": t.missing_from_notes,
+                  "extra_in_notes": t.extra_in_notes}
                  for t in topics],
                 ensure_ascii=False,
             )
