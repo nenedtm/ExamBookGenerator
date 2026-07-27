@@ -71,16 +71,16 @@ def _repair_truncated_json(text: str) -> str | None:
     """Attempt to repair JSON truncated by token limits.
 
     When the LLM output is cut off mid-object, this function tries to
-    find the last complete entry and close all open structures.
+    find the last complete entry and close all open structures in the
+    correct reverse-nesting order.
 
     Returns the repaired JSON string, or *None* if repair fails.
     """
-    # Find the last complete array entry: ",\n" or "},\n" or "]\n"
+    # Find the last complete array entry: "},\n" or "]\n" or "}" or "]"
     # Work backwards from the end to find the last complete item
     last_complete = -1
 
-    # Look for last complete object in an array: },
-    for pattern in (r'\},\s*$', r'\}', r'\],\s*$', r'\]'):
+    for pattern in (r'\},\s*$', r'\],\s*$', r'\}', r'\]'):
         m = re.search(pattern, text, re.MULTILINE)
         if m:
             candidate = m.end()
@@ -96,9 +96,8 @@ def _repair_truncated_json(text: str) -> str | None:
     # Remove trailing comma if present (before closing)
     repaired = re.sub(r',\s*$', '', repaired)
 
-    # Count open brackets/braces to determine what to close
-    open_braces = 0
-    open_brackets = 0
+    # Track the actual stack of open structures in order
+    stack: list[str] = []
     in_string = False
     escape_next = False
 
@@ -115,18 +114,15 @@ def _repair_truncated_json(text: str) -> str | None:
         if in_string:
             continue
         if ch == '{':
-            open_braces += 1
-        elif ch == '}':
-            open_braces -= 1
+            stack.append('}')
         elif ch == '[':
-            open_brackets += 1
-        elif ch == ']':
-            open_brackets -= 1
+            stack.append(']')
+        elif ch in ('}', ']'):
+            if stack and stack[-1] == ch:
+                stack.pop()
 
-    # Close in reverse order: first close arrays, then objects
-    suffix = ']' * max(0, open_brackets) + '}' * max(0, open_braces)
-
-    # Add the "chapters" key wrapper if it seems to be missing
+    # Close in reverse nesting order
+    suffix = ''.join(reversed(stack))
     result = repaired + suffix
 
     # Verify it parses
