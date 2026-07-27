@@ -204,9 +204,22 @@ def _find_syllabus_entry_for_topic(
     """Return the index of the syllabus entry that best matches *topic_name*.
 
     Returns *None* if no match is found.
+
+    Uses a multi-strategy approach:
+    1. Exact match (case-insensitive)
+    2. Substring containment with length-ratio scoring
+    3. Word overlap with a lower threshold for short words
+    4. Normalized word overlap (stripping common suffixes)
     """
+    import re as _re
+
     name_lower = topic_name.lower().strip()
-    name_words = set(name_lower.split())
+    # Use words >= 2 chars (not 3) to keep acronyms like "PDE", "ODE"
+    name_words = {
+        w for w in _re.split(r"[^a-z0-9]+", name_lower) if len(w) >= 2
+    }
+    # Also keep the original split for fallback
+    name_words_raw = set(name_lower.split())
 
     best_idx: int | None = None
     best_score = 0.0
@@ -216,6 +229,7 @@ def _find_syllabus_entry_for_topic(
         # Exact match
         if name_lower == entry_lower:
             return idx
+
         # Substring containment
         if name_lower in entry_lower or entry_lower in name_lower:
             score = min(len(name_lower), len(entry_lower)) / max(
@@ -225,8 +239,14 @@ def _find_syllabus_entry_for_topic(
                 best_idx = idx
                 best_score = score
                 continue
-        # Keyword overlap
-        entry_words = set(entry_lower.split())
+
+        # Word overlap (words >= 2 chars)
+        entry_words = {
+            w for w in _re.split(r"[^a-z0-9]+", entry_lower) if len(w) >= 2
+        }
+        if not entry_words or not name_words:
+            continue
+
         overlap = len(name_words & entry_words)
         if overlap > 0:
             score = overlap / max(len(name_words), len(entry_words))
@@ -234,7 +254,8 @@ def _find_syllabus_entry_for_topic(
                 best_idx = idx
                 best_score = score
 
-    return best_idx if best_score >= 0.3 else None
+    # Lower threshold from 0.3 to 0.2 to catch more matches
+    return best_idx if best_score >= 0.2 else None
 
 
 def _ensure_syllabus_coverage(
@@ -297,7 +318,7 @@ def _ensure_syllabus_coverage(
 
     for idx, entry in missing:
         entry_lower = entry.lower()
-        keywords = [w for w in entry_lower.split() if len(w) > 3]
+        keywords = [w for w in entry_lower.split() if len(w) >= 2]
         if not keywords:
             keywords = [entry_lower]
         matched_chunks = [
@@ -333,7 +354,7 @@ def _ensure_syllabus_coverage(
                 if any(
                     w in c.content.lower()
                     for w in syllabus_entries[idx].lower().split()
-                    if len(w) > 3
+                    if len(w) >= 2
                 )
             )
         )

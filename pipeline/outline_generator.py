@@ -428,7 +428,8 @@ class OutlineGenerator:
             len(topics),
             scope,
         )
-        num_predict = 16384
+        # Scale token budget: ~256 tokens per topic, minimum 16k
+        num_predict = max(16384, len(topics) * 256)
         raw_chapters = None
         validation_warnings: list[str] = []
 
