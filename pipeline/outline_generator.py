@@ -253,6 +253,10 @@ def _validate_outline(
 ) -> tuple[bool, list[str]]:
     """Validate that the outline covers all topics in correct order.
 
+    Topics with ``missing_from_notes=True`` are excluded from the
+    coverage check — they will be generated as placeholder chapters
+    later and don't need to appear in the LLM outline.
+
     Returns
     -------
     tuple[bool, list[str]]
@@ -274,11 +278,15 @@ def _validate_outline(
             if topic_idx not in topic_chapter_map:
                 topic_chapter_map[topic_idx] = ch_idx
 
-    # Check all topics are covered
+    # Check all topics are covered (skip missing_from_notes)
     missing: list[int] = []
     for idx in range(len(topics)):
-        if idx not in topic_chapter_map:
-            missing.append(idx)
+        if idx in topic_chapter_map:
+            continue
+        # Skip topics with no notes — they'll be placeholder chapters
+        if getattr(topics[idx], "missing_from_notes", False):
+            continue
+        missing.append(idx)
 
     if missing:
         missing_names = [topics[i].name for i in missing]
@@ -286,7 +294,7 @@ def _validate_outline(
             f"Missing topics in outline: {', '.join(missing_names)}"
         )
 
-    # Check order if syllabus
+    # Check order if syllabus (only for covered topics)
     if has_syllabus and len(missing) == 0:
         chapter_order = []
         for idx in range(len(topics)):
