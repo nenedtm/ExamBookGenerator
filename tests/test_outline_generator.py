@@ -235,48 +235,39 @@ class TestRenderOutlineMd:
 # ── OutlineGenerator — full mode ─────────────────────────────────────────────
 
 class TestOutlineGeneratorFull:
-    def test_generates_outline(self, tmp_path: Path) -> None:
-        mock_client = MagicMock()
-        mock_client.generate.return_value = _llm_outline_response()
-
-        gen = OutlineGenerator(mock_client)
+    def test_generates_outline_from_syllabus(self, tmp_path: Path) -> None:
+        """Syllabus-derived topics build outline directly (1 chapter per topic)."""
+        gen = OutlineGenerator(MagicMock())
         md, entries, outline_chapters = gen.generate(
             _two_topics(),
             scope="full",
             output_path=tmp_path / "outline.md",
         )
 
-        assert len(entries) == 6  # 2 chapters + 4 sections
-        assert entries[0].level == 1  # "Linear Algebra"
+        # 2 chapters, no sections (sections are filled by chapter generator)
+        assert len(entries) == 2
+        assert entries[0].level == 1
         assert entries[0].title == "Linear Algebra"
-        assert entries[1].level == 2  # "Vector Spaces"
-        assert entries[2].level == 2  # "Eigenvalues"
-        assert entries[3].level == 1  # "Calculus"
-        assert entries[4].level == 2  # "Derivatives"
-        assert entries[5].level == 2  # "Integrals"
-        assert md  # non-empty markdown
-        assert len(outline_chapters) == 2  # 2 outline chapters
+        assert entries[1].level == 1
+        assert entries[1].title == "Calculus"
+        assert md
+        assert len(outline_chapters) == 2
+        assert outline_chapters[0].topic_indices == [0]
+        assert outline_chapters[1].topic_indices == [1]
 
-    def test_respects_topic_order(self, tmp_path: Path) -> None:
-        mock_client = MagicMock()
-        mock_client.generate.return_value = _llm_outline_response()
-
-        gen = OutlineGenerator(mock_client)
+    def test_respects_syllabus_order(self, tmp_path: Path) -> None:
+        gen = OutlineGenerator(MagicMock())
         _, entries, _ = gen.generate(
             _two_topics(),
             scope="full",
             output_path=tmp_path / "outline.md",
         )
 
-        # First chapter must be Linear Algebra (topic 0), second must be Calculus (topic 1)
         chapter_titles = [e.title for e in entries if e.level == 1]
         assert chapter_titles == ["Linear Algebra", "Calculus"]
 
-    def test_writes_outline_md(self, tmp_path: Path) -> None:
-        mock_client = MagicMock()
-        mock_client.generate.return_value = _llm_outline_response()
-
-        gen = OutlineGenerator(mock_client)
+    def test_writes_outline_md_from_syllabus(self, tmp_path: Path) -> None:
+        gen = OutlineGenerator(MagicMock())
         gen.generate(
             _two_topics(),
             scope="full",
@@ -288,7 +279,7 @@ class TestOutlineGeneratorFull:
         assert "Linear Algebra" in content
 
     def test_anchors_unique(self, tmp_path: Path) -> None:
-        # Craft a response where two sections produce the same slug
+        # Two topics with same section slug → anchors must be deduped
         response = json.dumps({
             "chapters": [
                 {"title": "Intro", "sections": ["The Basics"]},
@@ -354,7 +345,7 @@ class TestOutlineGeneratorErrors:
         gen = OutlineGenerator(mock_client)
         with pytest.raises(OutlineGeneratorError, match="unrecognisable JSON"):
             gen.generate(
-                _two_topics(),
+                _single_topic(),  # non-syllabus → LLM path
                 output_path=tmp_path / "outline.md",
             )
 
@@ -365,7 +356,7 @@ class TestOutlineGeneratorErrors:
         gen = OutlineGenerator(mock_client)
         with pytest.raises(OutlineGeneratorError, match="missing the 'chapters' array"):
             gen.generate(
-                _two_topics(),
+                _single_topic(),  # non-syllabus → LLM path
                 output_path=tmp_path / "outline.md",
             )
 

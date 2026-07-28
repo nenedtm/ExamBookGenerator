@@ -359,11 +359,18 @@ class OutlineGenerator:
     ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
         """Generate a structured outline from *topics*.
 
+        When topics are derived from a syllabus (``order_source == "syllabus"``),
+        the outline is built directly from the topic list — one chapter per
+        topic, in syllabus order — without querying the LLM.  This guarantees
+        that the outline matches the syllabus structure exactly.
+
+        Otherwise, the LLM is asked to group topics into chapters and suggest
+        sub-sections.
+
         Parameters
         ----------
         topics:
             Ordered list of ``Topic`` objects (from ``TopicAnalyzer``).
-            The order is preserved — the LLM is not allowed to reorder.
         scope:
             ``"full"`` for a complete manual outline, or ``"topic"`` for
             a single-topic focus.
@@ -381,53 +388,26 @@ class OutlineGenerator:
         Raises
         ------
         OutlineGeneratorError
-            If the LLM returns an unparseable response.
+            If the LLM returns an unparseable response (non-syllabus path only).
         """
         if not topics:
             logger.warning("No topics provided — returning empty outline")
             return "", [], []
 
-        # Build topic summary for the prompt
+        has_syllabus = any(t.order_source == "syllabus" for t in topics)
+
+        # ── Syllabus path: build outline directly from topics (1:1) ─────
+        if has_syllabus:
+            return self._generate_from_syllabus(topics, output_path)
+
+        # ── Non-syllabus path: ask LLM to organize topics into chapters ─
         topic_block = self._format_topics(topics)
 
-        # Detect if topics are syllabus-ordered
-        has_syllabus = any(
-            t.order_source == "syllabus" for t in topics
-        )
-
-        # Query LLM
-        syllabus_note = ""
-        if has_syllabus:
-            syllabus_note = (
-                "\n\n## SYLLABUS ORDER — MANDATORY — NON-NEGOTIABLE\n\n"
-                "The topics below are listed in the EXACT order of an official "
-                "exam syllabus. This order is FINAL and MUST be preserved.\n\n"
-                "RULES FOR SYLLABUS ORDER:\n"
-                "1. Chapter 1 MUST contain Topic 1.\n"
-                "2. The LAST chapter MUST contain the LAST topic.\n"
-                "3. If you group topics into one chapter, they MUST be "
-                "CONSECUTIVE topics from the list (e.g., topics 3, 4, 5).\n"
-                "4. You MUST NEVER move a topic to a position before topics "
-                "that originally preceded it.\n"
-                "5. You MUST NEVER skip a topic — every numbered topic must "
-                "appear in the output.\n\n"
-                "VIOLATION EXAMPLES (WRONG):\n"
-                "- Moving 'Calculus' before 'Algebra' if Algebra is listed first\n"
-                "- Skipping topic 3 and including topics 1, 2, 4, 5\n"
-                "- Putting topic 5 in chapter 2 and topic 2 in chapter 3\n\n"
-                "VALID EXAMPLE (CORRECT):\n"
-                "If topics are [Algebra, Calculus, Probability], valid outputs:\n"
-                "- [{Algebra chapters}, {Calculus chapters}, {Probability chapters}]\n"
-                "- [{Algebra+Calculus chapters}, {Probability chapters}]\n"
-                "- [{Algebra chapters}, {Calculus+Probability chapters}]\n"
-            )
-
         prompt = build_outline_prompt() + (
-            f"\n\nThe topics below are already ordered (either by "
-            f"{'syllabus position' if has_syllabus else 'pedagogical sequence'}). "
-            f"Do NOT reorder them. You may group related topics into the same "
-            f"chapter, but the relative order of topics must remain unchanged."
-            f"{syllabus_note}\n\n"
+            f"\n\nThe topics below are already ordered by pedagogical "
+            f"sequence. Do NOT reorder them. You may group related topics "
+            f"into the same chapter, but the relative order of topics "
+            f"must remain unchanged.\n\n"
             f"Topics:\n{topic_block}"
         )
 
@@ -436,10 +416,8 @@ class OutlineGenerator:
             len(topics),
             scope,
         )
-        # Scale token budget: ~256 tokens per topic, minimum 16k
         num_predict = max(16384, len(topics) * 256)
         raw_chapters = None
-        validation_warnings: list[str] = []
 
         for attempt in range(3):
             raw_response = self._client.generate(
@@ -460,14 +438,11 @@ class OutlineGenerator:
                 else:
                     raise
 
-            # Validate outline covers all topics in correct order
-            is_valid, warnings = _validate_outline(raw_chapters, topics, has_syllabus)
+            is_valid, warnings = _validate_outline(raw_chapters, topics, has_syllabus=False)
             if is_valid:
                 break
 
-            validation_warnings = warnings
             if attempt < 2:
-                # Append validation feedback to prompt for next attempt
                 feedback = (
                     "\n\n## CRITICAL ERRORS IN PREVIOUS OUTLINE\n\n"
                     "Your outline had the following problems:\n"
@@ -478,8 +453,7 @@ class OutlineGenerator:
                     "\nYou MUST fix ALL issues above. "
                     "Re-output the complete corrected JSON outline."
                 )
-                prompt_with_feedback = prompt + feedback
-                prompt = prompt_with_feedback
+                prompt = prompt + feedback
                 num_predict *= 2
                 logger.warning(
                     "Outline validation failed (attempt %d): %s, "
@@ -493,7 +467,6 @@ class OutlineGenerator:
                     attempt + 1, "; ".join(warnings),
                 )
 
-        # Should never happen, but satisfy type checker
         if raw_chapters is None:
             raise OutlineGeneratorError(
                 "Outline generation failed: no valid response from LLM"
@@ -517,6 +490,47 @@ class OutlineGenerator:
             "Outline generated — %d chapter(s), %d total entries",
             sum(1 for e in entries if e.level == 1),
             len(entries),
+        )
+        return outline_md, entries, outline_chapters
+
+    # ── Syllabus outline builder ────────────────────────────────────────
+
+    def _generate_from_syllabus(
+        self,
+        topics: list[Topic],
+        output_path: Path | str | None = None,
+    ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
+        """Build outline directly from syllabus-derived topics (1:1 mapping).
+
+        Each topic becomes exactly one chapter, preserving syllabus order.
+        No LLM call is made.
+        """
+        raw_chapters: list[dict[str, object]] = []
+        for topic in topics:
+            raw_chapters.append({
+                "title": topic.name,
+                "sections": [],
+            })
+
+        entries = _build_entries(raw_chapters)
+        entries = _unique_anchors(entries)
+
+        outline_chapters: list[OutlineChapter] = []
+        for i, (ch, topic) in enumerate(zip(raw_chapters, topics)):
+            outline_chapters.append(OutlineChapter(
+                title=str(ch["title"]),
+                sections=[],
+                topic_indices=[i],
+            ))
+
+        outline_md = _render_outline_md(entries)
+
+        out = Path(output_path) if output_path else Path("output/outline.md")
+        self._save(out, outline_md)
+
+        logger.info(
+            "Syllabus outline generated — %d chapter(s) from syllabus topics",
+            len(outline_chapters),
         )
         return outline_md, entries, outline_chapters
 
