@@ -316,11 +316,13 @@ if st.session_state.phase == "outline_done" and st.session_state.outline_state i
         if st.button("✅ Seleziona tutti", use_container_width=True):
             for i in range(len(outline_chapters)):
                 st.session_state.chapter_selection[i] = True
+                st.session_state[f"ch_check_{i}"] = True
             st.rerun()
     with col_desel:
         if st.button("❌ Deseleziona tutti", use_container_width=True):
             for i in range(len(outline_chapters)):
                 st.session_state.chapter_selection[i] = False
+                st.session_state[f"ch_check_{i}"] = False
             st.rerun()
 
     # Generate manual button
