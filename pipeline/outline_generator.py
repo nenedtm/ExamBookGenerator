@@ -568,28 +568,51 @@ class OutlineGenerator:
                     all_ch_indices,
                 ))
 
-            # Remaining topics: skip section items (already absorbed),
-            # turn everything else into individual chapters
+            # Remaining topics: absorb into the best-matching chapter
+            # (never create individual chapters — the syllabus defines the structure)
             for i, topic in enumerate(topics):
                 if i in used_indices:
                     continue
                 topic_lower = topic.name.lower().strip()
+                topic_words = {
+                    w for w in re.split(r"[^a-z0-9]+", topic_lower)
+                    if len(w) >= 3
+                }
+                # 1. Try exact section-title match
+                absorbed = False
                 if topic_lower in all_section_titles:
-                    # Find which chapter this section belongs to and add
-                    # the index there instead
                     for pair in chapter_topic_pairs:
                         ch_sections = [s.lower().strip() for s in pair[0].get("sections", [])]
                         if topic_lower in ch_sections:
                             pair[1].append(i)
                             used_indices.add(i)
+                            absorbed = True
                             break
-                    if i in used_indices:
-                        continue
-                # Truly leftover: individual chapter
-                chapter_topic_pairs.append((
-                    {"title": topic.name, "sections": []},
-                    [i],
-                ))
+                if absorbed:
+                    continue
+                # 2. Find the chapter with best word overlap
+                best_ch_idx = -1
+                best_score = 0.0
+                for pi, pair in enumerate(chapter_topic_pairs):
+                    ch_title = str(pair[0].get("title", "")).lower().strip()
+                    ch_words = {
+                        w for w in re.split(r"[^a-z0-9]+", ch_title)
+                        if len(w) >= 3
+                    }
+                    score = 0.0
+                    if topic_words and ch_words:
+                        overlap = len(topic_words & ch_words)
+                        score = overlap / max(len(topic_words), len(ch_words))
+                    if score > best_score:
+                        best_ch_idx = pi
+                        best_score = score
+                if best_ch_idx >= 0:
+                    chapter_topic_pairs[best_ch_idx][1].append(i)
+                    used_indices.add(i)
+                else:
+                    # Last resort: first chapter
+                    chapter_topic_pairs[0][1].append(i)
+                    used_indices.add(i)
         else:
             # Flat syllabus: each topic → one chapter
             chapter_topic_pairs = [
@@ -722,11 +745,12 @@ class OutlineGenerator:
             indent = info["indent"]
 
             # ── Detect chapter/heading boundaries ────────────────────────
+            _roman = r'(?:\d+|[IVXLCDM]+)'
             ch_match = re.match(
                 r'^\*{0,2}(?:#{1,3}\s+)?'
                 r'(?:Chapter|Capitolo|Module|Modulo|Unit|Uni[tà]|Topic|Tema|'
                 r'Section|Sezione|Lezione|Argomento|Parte|Part)'
-                r'\s+\d+(?:\s*[:.\-]\s+|\s+)(.+?)\*{0,2}$',
+                r'\s+' + _roman + r'(?:\s*[:.\-]\s+|\s+)(.+?)\*{0,2}$',
                 stripped, re.IGNORECASE,
             )
             if ch_match:
@@ -750,10 +774,10 @@ class OutlineGenerator:
                 current_sections = []
                 continue
 
-            # Markdown header with number but no keyword: ### 1. Title, ## 1. Title
+            # Markdown header with number but no keyword: ### 1. Title, ## I. Title
             if ch_match is None:
                 hdr_match = re.match(
-                    r'^#{1,3}\s+\d+[\.\)]\s+(.+?)\*{0,2}$', stripped,
+                    r'^#{1,3}\s+(?:\d+|[IVXLCDM]+)[\.\)]\s+(.+?)\*{0,2}$', stripped,
                 )
                 if hdr_match:
                     if current_title is not None:

@@ -335,6 +335,39 @@ def _parse_document(doc: Document) -> tuple[Document, list[ExtractedImage]]:
         return doc, []
 
 
+def _load_explicit_syllabus(
+    cfg: Config,
+    parsed_docs: list[Document],
+) -> Document | None:
+    """Load the syllabus from an explicit path if not already in *parsed_docs*."""
+    syllabus_path_str = cfg.get("syllabus.path")
+    if not syllabus_path_str:
+        return None
+    try:
+        p = Path(syllabus_path_str)
+        if not p.exists():
+            logger.warning("Syllabus path does not exist: %s", syllabus_path_str)
+            return None
+        from pipeline.scanner import detect_file_type
+        ftype = detect_file_type(p)
+        if ftype in (FileType.UNKNOWN, FileType.IMAGE):
+            logger.warning("Unsupported syllabus file type: %s", ftype)
+            return None
+        doc = Document(
+            source_path=str(p),
+            file_type=ftype,
+            is_syllabus=True,
+        )
+        parsed_doc, _ = _parse_document(doc)
+        if parsed_doc.content and parsed_doc.content.strip():
+            parsed_docs.append(parsed_doc)
+            logger.info("Loaded syllabus from explicit path: %s", syllabus_path_str)
+            return parsed_doc
+    except Exception as exc:
+        logger.warning("Failed to load syllabus from %s: %s", syllabus_path_str, exc)
+    return None
+
+
 def _parse_all(documents: list[Document]) -> tuple[list[Document], list[ExtractedImage]]:
     """Parse all documents and collect extracted images."""
     all_images: list[ExtractedImage] = []
@@ -664,6 +697,9 @@ def run_pipeline(
             if d.is_syllabus:
                 syllabus_doc = d
                 break
+
+        if syllabus_doc is None:
+            syllabus_doc = _load_explicit_syllabus(cfg, parsed_docs)
 
     topics_changed = len(new_hashes) > 0 or len(modified_hashes) > 0
     cached_topics = None
@@ -1108,6 +1144,9 @@ def run_outline_phase(
             if d.is_syllabus:
                 syllabus_doc = d
                 break
+
+        if syllabus_doc is None:
+            syllabus_doc = _load_explicit_syllabus(cfg, parsed_docs)
 
     topics_changed = len(new_hashes) > 0 or len(modified_hashes) > 0
     cached_topics = None
