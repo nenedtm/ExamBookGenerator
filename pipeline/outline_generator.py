@@ -356,13 +356,15 @@ class OutlineGenerator:
         *,
         scope: Literal["full", "topic"] = "full",
         output_path: Path | str | None = None,
+        syllabus_text: str | None = None,
     ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
         """Generate a structured outline from *topics*.
 
         When topics are derived from a syllabus (``order_source == "syllabus"``),
         the outline is built directly from the topic list — one chapter per
-        topic, in syllabus order — without querying the LLM.  This guarantees
-        that the outline matches the syllabus structure exactly.
+        topic, in syllabus order — without querying the LLM.  When
+        *syllabus_text* is provided, it is parsed to also extract section-level
+        structure, so chapters and their sections match the syllabus exactly.
 
         Otherwise, the LLM is asked to group topics into chapters and suggest
         sub-sections.
@@ -372,11 +374,15 @@ class OutlineGenerator:
         topics:
             Ordered list of ``Topic`` objects (from ``TopicAnalyzer``).
         scope:
-            ``"full"`` for a complete manual outline, or ``"topic"`` for
+            ``"full"`` for a complete manual outline, or ``"topic`` for
             a single-topic focus.
         output_path:
             Where to write ``outline.md``.  Defaults to
             ``output/outline.md``.
+        syllabus_text:
+            Optional raw syllabus text.  When provided and topics are
+            syllabus-derived, the outline includes sections extracted from
+            the syllabus structure.
 
         Returns
         -------
@@ -396,9 +402,9 @@ class OutlineGenerator:
 
         has_syllabus = any(t.order_source == "syllabus" for t in topics)
 
-        # ── Syllabus path: build outline directly from topics (1:1) ─────
+        # ── Syllabus path: build outline directly from topics ───────────
         if has_syllabus:
-            return self._generate_from_syllabus(topics, output_path)
+            return self._generate_from_syllabus(topics, output_path, syllabus_text)
 
         # ── Non-syllabus path: ask LLM to organize topics into chapters ─
         topic_block = self._format_topics(topics)
@@ -499,28 +505,68 @@ class OutlineGenerator:
         self,
         topics: list[Topic],
         output_path: Path | str | None = None,
+        syllabus_text: str | None = None,
     ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
-        """Build outline directly from syllabus-derived topics (1:1 mapping).
+        """Build outline directly from syllabus-derived topics.
 
         Each topic becomes exactly one chapter, preserving syllabus order.
         No LLM call is made.
+
+        When *syllabus_text* is provided, the section structure is extracted
+        from the syllabus text so that each chapter's sub-sections match
+        the syllabus exactly.
         """
-        raw_chapters: list[dict[str, object]] = []
-        for topic in topics:
-            raw_chapters.append({
-                "title": topic.name,
-                "sections": [],
-            })
+        # Try to extract hierarchical chapter+section structure from syllabus
+        syllabus_structure: list[dict[str, object]] = []
+        if syllabus_text:
+            syllabus_structure = self._parse_syllabus_structure(syllabus_text)
+
+        # Build (chapter_dict, topic_index) pairs
+        chapter_topic_pairs: list[tuple[dict[str, object], int]] = []
+
+        if syllabus_structure:
+            # Match parsed chapters to topics by name similarity
+            used_indices: set[int] = set()
+            for parsed_ch in syllabus_structure:
+                parsed_title = str(parsed_ch.get("title", "")).strip()
+                parsed_sections = list(parsed_ch.get("sections", []))
+
+                best_idx = self._find_topic_for_chapter(parsed_title, topics, used_indices)
+                if best_idx is not None:
+                    used_indices.add(best_idx)
+                    chapter_topic_pairs.append((
+                        {"title": topics[best_idx].name, "sections": parsed_sections},
+                        best_idx,
+                    ))
+
+            # Remaining topics (not matched to any parsed chapter) become
+            # individual chapters with no sections
+            for i, topic in enumerate(topics):
+                if i not in used_indices:
+                    chapter_topic_pairs.append((
+                        {"title": topic.name, "sections": []},
+                        i,
+                    ))
+        else:
+            # Flat syllabus: each topic → one chapter, no sections
+            for i, topic in enumerate(topics):
+                chapter_topic_pairs.append((
+                    {"title": topic.name, "sections": []},
+                    i,
+                ))
+
+        raw_chapters = [pair[0] for pair in chapter_topic_pairs]
 
         entries = _build_entries(raw_chapters)
         entries = _unique_anchors(entries)
 
+        # Build OutlineChapter objects with correct topic index mapping
         outline_chapters: list[OutlineChapter] = []
-        for i, (ch, topic) in enumerate(zip(raw_chapters, topics)):
+        for ch_dict, topic_idx in chapter_topic_pairs:
             outline_chapters.append(OutlineChapter(
-                title=str(ch["title"]),
-                sections=[],
-                topic_indices=[i],
+                title=str(ch_dict["title"]),
+                sections=list(ch_dict.get("sections", [])),
+                topic_indices=[topic_idx],
             ))
 
         outline_md = _render_outline_md(entries)
@@ -533,6 +579,222 @@ class OutlineGenerator:
             len(outline_chapters),
         )
         return outline_md, entries, outline_chapters
+
+    @staticmethod
+    def _parse_syllabus_structure(text: str) -> list[dict[str, object]]:
+        """Parse syllabus text into a hierarchical chapter + section structure.
+
+        Handles formats like::
+
+            ## Chapter 1: Title
+            1. Section one
+            2. Section two
+
+            Chapter 2: Title
+            1. Section one
+
+            Chapter 1 - Title
+            - Section one
+            - Section two
+
+            Module 1: Title
+            Topic 1: Title
+            Unit 1: Title
+            Lezione 1: Titolo
+
+            1. First Topic
+               a. Subtopic
+               b. Subtopic
+            2. Second Topic
+
+        Returns a list of dicts with keys ``"title"`` (chapter title) and
+        ``"sections"`` (list of section title strings).  Returns an empty
+        list if no chapter boundaries can be detected (flat syllabus).
+        """
+        lines = text.splitlines()
+        stripped_lines = [(line, line.strip()) for line in lines]
+
+        # ── Pass 1: detect hierarchical numbered list structure ──────────
+        # Identify numbered items at minimum indent that have sub-items
+        line_infos: list[dict] = []
+        for raw, stripped in stripped_lines:
+            if not stripped:
+                line_infos.append({"type": "blank", "indent": 0})
+                continue
+            indent = len(raw) - len(raw.lstrip())
+            num_match = re.match(r'^(\d+)[\.\)]\s+(.+)$', stripped)
+            is_num = num_match is not None
+            has_sub = False  # will be set after scanning ahead
+            line_infos.append({
+                "type": "numbered" if is_num else "other",
+                "indent": indent,
+                "text": stripped,
+                "has_sub": False,
+                "title": num_match.group(2).strip() if is_num else None,
+            })
+
+        # Mark numbered items that have sub-items (higher indent or lettered/bullet after them)
+        for i, info in enumerate(line_infos):
+            if info["type"] != "numbered":
+                continue
+            # Look ahead at non-blank lines until next numbered at same or lower indent
+            for j in range(i + 1, len(line_infos)):
+                next_info = line_infos[j]
+                if next_info["type"] == "blank":
+                    # Allow blank lines between chapter and sections
+                    if j < len(line_infos) - 1:
+                        continue
+                    break
+                if next_info["type"] == "numbered":
+                    # Allow blank lines, then check indent
+                    if next_info["indent"] <= info["indent"]:
+                        break  # next chapter or flat item
+                    else:
+                        info["has_sub"] = True
+                        break
+                else:
+                    # lettered, bullet, other indented content
+                    if next_info["indent"] > info["indent"]:
+                        info["has_sub"] = True
+                        break
+                    elif next_info["indent"] <= info["indent"]:
+                        break
+            if j == i + 1 and line_infos[j]["type"] == "blank":
+                info["has_sub"] = True  # has content after blank
+
+        # Collect numbered items that act as chapter headings (have sub-items)
+        chapter_num_lines: set[int] = set()
+        for i, info in enumerate(line_infos):
+            if info["type"] == "numbered" and info["has_sub"]:
+                chapter_num_lines.add(i)
+
+        # ── Pass 2: build chapter+section structure ─────────────────────
+        chapters: list[dict[str, object]] = []
+        current_title: str | None = None
+        current_sections: list[str] = []
+
+        for i, (raw, stripped) in enumerate(stripped_lines):
+            if not stripped:
+                continue
+            info = line_infos[i]
+            indent = info["indent"]
+
+            # ── Detect chapter/heading boundaries ────────────────────────
+            ch_match = re.match(
+                r'^\*{0,2}(?:#{1,3}\s+)?'
+                r'(?:Chapter|Capitolo|Module|Modulo|Unit|Uni[tà]|Topic|Tema|'
+                r'Section|Sezione|Lezione|Argomento|Parte|Part)'
+                r'\s+\d+(?:\s*[:.\-]\s+|\s+)(.+?)\*{0,2}$',
+                stripped, re.IGNORECASE,
+            )
+            if ch_match:
+                if current_title is not None:
+                    chapters.append({
+                        "title": current_title,
+                        "sections": current_sections,
+                    })
+                current_title = ch_match.group(1).strip()
+                current_sections = []
+                continue
+
+            # Fallback: numbered item with sub-items (hierarchical list)
+            if info["type"] == "numbered" and i in chapter_num_lines:
+                if current_title is not None:
+                    chapters.append({
+                        "title": current_title,
+                        "sections": current_sections,
+                    })
+                current_title = info["title"]
+                current_sections = []
+                continue
+
+            if current_title is None:
+                continue
+
+            # ── Section items inside a chapter ───────────────────────────
+            _section = None
+
+            # Numbered sections: 1. Section, 1.1 Section, 1) Section
+            sec_match = re.match(
+                r'^\d+(?:\.\d+)*[\.\)]?\s+\*?\*?(.+?)\*?\*?\s*$',
+                stripped,
+            )
+            if sec_match:
+                _section = sec_match.group(1).strip()
+
+            # Lettered sections: a. Section, a) Section, (a) Section
+            if _section is None:
+                let_match = re.match(
+                    r'^\(?[a-zA-Z]\)?\.?\s+\*?\*?(.+?)\*?\*?\s*$',
+                    stripped,
+                )
+                if let_match:
+                    candidate = let_match.group(1).strip()
+                    if len(candidate) > 1:
+                        _section = candidate
+
+            # Bullet sections: - Section, * Section, • Section
+            if _section is None:
+                bul_match = re.match(r'^[-•*]\s+\*?\*?(.+?)\*?\*?\s*$', stripped)
+                if bul_match:
+                    _section = bul_match.group(1).strip()
+
+            if _section is not None:
+                current_sections.append(_section)
+
+        if current_title is not None:
+            chapters.append({
+                "title": current_title,
+                "sections": current_sections,
+            })
+
+        return chapters if chapters else []
+
+    @staticmethod
+    def _find_topic_for_chapter(
+        chapter_title: str,
+        topics: list[Topic],
+        used_indices: set[int],
+    ) -> int | None:
+        """Find the best topic index matching *chapter_title*.
+
+        Uses multi-strategy matching: exact match (case-insensitive),
+        substring containment, and word overlap.  Skips already-used indices.
+        """
+        import re as _re
+        title_lower = chapter_title.lower().strip()
+        title_words = {w for w in _re.split(r"[^a-z0-9]+", title_lower) if len(w) >= 2}
+        best_idx: int | None = None
+        best_score = 0.0
+
+        for i, topic in enumerate(topics):
+            if i in used_indices:
+                continue
+            name_lower = topic.name.lower().strip()
+
+            # Exact match
+            if title_lower == name_lower:
+                return i
+
+            # Substring containment
+            if title_lower in name_lower or name_lower in title_lower:
+                score = min(len(title_lower), len(name_lower)) / max(
+                    len(title_lower), len(name_lower), 1,
+                )
+                if score > best_score:
+                    best_idx = i
+                    best_score = score
+
+            # Word overlap
+            name_words = {w for w in _re.split(r"[^a-z0-9]+", name_lower) if len(w) >= 2}
+            if title_words and name_words:
+                overlap = len(title_words & name_words)
+                score = overlap / max(len(title_words), len(name_words))
+                if score > best_score:
+                    best_idx = i
+                    best_score = score
+
+        return best_idx if best_score >= 0.25 else None
 
     # ── Internals ───────────────────────────────────────────────────────
 

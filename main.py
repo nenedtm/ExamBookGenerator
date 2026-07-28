@@ -729,6 +729,8 @@ def run_pipeline(
     _progress(6, "Generating outline...")
     outline_gen = OutlineGenerator(client, cfg)
 
+    syllabus_text: str | None = syllabus_doc.content if syllabus_doc else None
+
     outline_cached = False
     if not topics_changed and not force:
         outline_path = Path("output/outline.md")
@@ -740,12 +742,16 @@ def run_pipeline(
                     logger.info("Reusing existing outline (topics unchanged)")
                     outline_cached = True
                     # Parse existing outline for index_entries and outline_chapters
-                    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+                    _, index_entries, outline_chapters = outline_gen.generate(
+                        topics, scope=scope, syllabus_text=syllabus_text,
+                    )
             except Exception:
                 pass
 
     if not outline_cached:
-        _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+        _, index_entries, outline_chapters = outline_gen.generate(
+            topics, scope=scope, syllabus_text=syllabus_text,
+        )
 
     # ── 12b. Indice and chapter selection ──────────────────────────────
     chapters_dir = output_dir / "chapters"
@@ -1157,6 +1163,8 @@ def run_outline_phase(
     _progress(6, "Generating outline...")
     outline_gen = OutlineGenerator(client, cfg)
 
+    syllabus_text: str | None = syllabus_doc.content if syllabus_doc else None
+
     outline_cached = False
     if not topics_changed and not force:
         outline_path = output_dir / "outline.md"
@@ -1165,12 +1173,16 @@ def run_outline_phase(
                 existing_outline = outline_path.read_text(encoding="utf-8")
                 if existing_outline.strip():
                     outline_cached = True
-                    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+                    _, index_entries, outline_chapters = outline_gen.generate(
+                        topics, scope=scope, syllabus_text=syllabus_text,
+                    )
             except Exception:
                 pass
 
     if not outline_cached:
-        _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+        _, index_entries, outline_chapters = outline_gen.generate(
+            topics, scope=scope, syllabus_text=syllabus_text,
+        )
 
     # ── 10. Write indice ──────────────────────────────────────────────
     chapters_dir = output_dir / "chapters"
