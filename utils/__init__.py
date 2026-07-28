@@ -38,14 +38,22 @@ def _try_parse_markdown_outline(text: str) -> dict | None:
 
     for line in text.split("\n"):
         stripped = line.strip()
+        if not stripped:
+            continue
 
-        # Match markdown headers: ### Chapter Title or ## Chapter Title
-        header_match = re.match(r'^#{2,3}\s+(?:Chapter\s+\d+:\s*)?(.+)', stripped, re.IGNORECASE)
+        # Match chapter headings:
+        #   ### Chapter 1: Title   (markdown)
+        #   ## Chapter 1: Title    (markdown)
+        #   Chapter 1: Title       (plain)
+        #   Chapter 1 - Title       (plain)
+        header_match = re.match(
+            r'^(?:#{2,3}\s+)?Chapter\s+\d+\s*[:\.]\s*(.+)',
+            stripped, re.IGNORECASE,
+        )
         if header_match:
-            # Save previous chapter if exists
             if current_title and current_sections:
                 chapters.append({"title": current_title, "sections": current_sections})
-            current_title = header_match.group(1).strip().rstrip(":")
+            current_title = header_match.group(1).strip()
             current_sections = []
             continue
 

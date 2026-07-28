@@ -159,6 +159,7 @@ class OllamaClient:
             "model": effective_model,
             "prompt": prompt,
             "stream": False,
+            "format": "json",
         }
         if system:
             body["system"] = system
