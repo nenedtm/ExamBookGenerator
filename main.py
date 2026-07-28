@@ -143,6 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable all interactive prompts (for scripts/CI).",
     )
     parser.add_argument(
+        "--chapters",
+        help="Comma-separated chapter numbers to generate (e.g. '1,3,5'). "
+             "When omitted in non-interactive mode, all chapters are generated.",
+    )
+    parser.add_argument(
         "--force", action="store_true",
         help="Force full reprocessing, ignoring all caches.",
     )
@@ -179,6 +184,115 @@ def _ask_scope() -> tuple[str, str | None, int]:
         return "topic", topic_name, focus_depth
 
     return "full", None, 7
+
+
+# ── Chapter selection and incremental generation ────────────────────────────
+
+
+def _slugify(text: str) -> str:
+    """Convert text to a filesystem-safe slug."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", text)
+    ascii_text = nfkd.encode("ascii", "ignore").decode("ascii")
+    slug = ascii_text.lower()
+    slug = slug.replace("'", "").replace("'", "")
+    slug = __import__("re").sub(r"[^a-z0-9 \-]", "", slug)
+    slug = __import__("re").sub(r"[\s\-]+", "-", slug).strip("-")
+    return slug
+
+
+def _chapter_filename(idx: int, title: str) -> str:
+    """Build filename for an individual chapter file: ``cap_N_slug.md``."""
+    slug = _slugify(title)
+    return f"cap_{idx + 1}_{slug}.md"
+
+
+def _save_chapter_file(chapters_dir: Path, idx: int, title: str, chapter_md: str) -> Path:
+    """Write a single chapter to ``chapters_dir/cap_N_slug.md``."""
+    chapters_dir.mkdir(parents=True, exist_ok=True)
+    filename = _chapter_filename(idx, title)
+    path = chapters_dir / filename
+    path.write_text(chapter_md, encoding="utf-8")
+    logger.info("Chapter %d saved to %s", idx + 1, path)
+    return path
+
+
+def _load_existing_chapters(chapters_dir: Path, total: int) -> set[int]:
+    """Scan *chapters_dir* and return set of 0-based indices already generated.
+
+    Only counts files whose index is within ``[0, total)``.
+    """
+    existing: set[int] = set()
+    if not chapters_dir.exists():
+        return existing
+    for f in chapters_dir.iterdir():
+        if not f.is_file() or not f.name.startswith("cap_") or not f.name.endswith(".md"):
+            continue
+        try:
+            # cap_N_slug.md → extract N
+            num_str = f.name.split("_")[1]
+            num = int(num_str)
+            if 1 <= num <= total:
+                existing.add(num - 1)
+        except (IndexError, ValueError):
+            continue
+    return existing
+
+
+def _write_indice(
+    output_dir: Path,
+    outline_chapters: list,
+    selected: set[int] | None,
+    existing: set[int],
+) -> Path:
+    """Write ``output/indice.md`` with numbered chapters and status marks.
+
+    ``selected`` is *None* meaning all, or a set of 0-based indices.
+    ``existing`` is the set of 0-based indices already on disk.
+    """
+    lines = [
+        "# Indice del Manuale",
+        "",
+        "Capitoli generati sono contrassegnati con [X].",
+        "",
+    ]
+    for i, ch in enumerate(outline_chapters):
+        mark = "[X]" if i in existing else "[ ]"
+        lines.append(f"- {mark} {i + 1}. {ch.title}")
+    lines.append("")
+
+    out_path = output_dir / "indice.md"
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Indice saved to %s", out_path)
+    return out_path
+
+
+def _ask_chapter_selection(outline_chapters: list, existing: set[int]) -> set[int] | None:
+    """Interactive prompt: show numbered chapters and ask user to select.
+
+    Returns None for "all", or a set of 0-based indices.
+    """
+    print("\n--- Selezione Capitoli ---")
+    for i, ch in enumerate(outline_chapters):
+        status = "  [gia' generato]" if i in existing else ""
+        print(f"  [{i + 1}] {ch.title}{status}")
+
+    print()
+    raw = input(
+        "Capitoli da generare (numeri separati da virgola, o Invio per tutti): "
+    ).strip()
+
+    if not raw:
+        return None  # all
+
+    selected: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            num = int(part)
+            if 1 <= num <= len(outline_chapters):
+                selected.add(num - 1)
+    return selected
 
 
 # ── Document parsing ─────────────────────────────────────────────────────────
@@ -626,6 +740,41 @@ def run_pipeline(
     if not outline_cached:
         _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
 
+    # ── 12b. Indice and chapter selection ──────────────────────────────
+    chapters_dir = output_dir / "chapters"
+
+    if scope == "topic":
+        # Topic focus mode — no selection, single chapter
+        selected_chapters: set[int] | None = None
+    else:
+        # Write indice file
+        _write_indice(output_dir, outline_chapters, None, set())
+
+        # Check which chapters already exist on disk
+        existing_chapters = _load_existing_chapters(chapters_dir, len(outline_chapters))
+        if existing_chapters:
+            logger.info(
+                "Found %d already-generated chapter(s) in %s",
+                len(existing_chapters), chapters_dir,
+            )
+
+        # Interactive selection
+        if not args.no_interactive:
+            selected_chapters = _ask_chapter_selection(outline_chapters, existing_chapters)
+        else:
+            # Non-interactive: use --chapters flag or generate all
+            chapters_flag = getattr(args, "chapters", None)
+            if chapters_flag:
+                selected_chapters = set()
+                for part in chapters_flag.split(","):
+                    part = part.strip()
+                    if part.isdigit():
+                        num = int(part)
+                        if 1 <= num <= len(outline_chapters):
+                            selected_chapters.add(num - 1)
+            else:
+                selected_chapters = None  # all
+
     # ── 13. Chapter generation (incremental) ──────────────────────────
     _progress(7, "Generating chapters...")
     template = load_template(template_path)
@@ -647,6 +796,14 @@ def run_pipeline(
             # so we regenerate if chapters are needed. The LLM cache handles this.
             pass
 
+    # Tracks existing chapters across the loop (resume support)
+    if scope == "topic":
+        existing_chapters_local: set[int] = set()
+        selected_chapters_local: set[int] | None = None
+    else:
+        existing_chapters_local = _load_existing_chapters(chapters_dir, len(outline_chapters))
+        selected_chapters_local = selected_chapters
+
     if scope == "topic":
         # Focus mode: single chapter, ignore outline structure
         for topic in topics:
@@ -662,8 +819,24 @@ def run_pipeline(
             chapters_md.append(chapter_md)
     else:
         # Full mode: iterate over outline chapters, matching topics to each
-        for outline_ch in outline_chapters:
-            logger.info("  Generating chapter: %s", outline_ch.title)
+        for ch_idx, outline_ch in enumerate(outline_chapters):
+            # Skip chapters not selected by the user
+            if selected_chapters_local is not None and ch_idx not in selected_chapters_local:
+                logger.info("  Skipping chapter %d: %s (not selected)", ch_idx + 1, outline_ch.title)
+                continue
+
+            # Skip chapters already generated on disk (resume support)
+            if ch_idx in existing_chapters_local:
+                logger.info(
+                    "  Chapter %d: %s — already generated, loading from disk",
+                    ch_idx + 1, outline_ch.title,
+                )
+                chapter_path = chapters_dir / _chapter_filename(ch_idx, outline_ch.title)
+                if chapter_path.exists():
+                    chapters_md.append(chapter_path.read_text(encoding="utf-8"))
+                continue
+
+            logger.info("  Generating chapter %d: %s", ch_idx + 1, outline_ch.title)
 
             # Collect topics matched to this outline chapter
             matched_topics = [
@@ -726,9 +899,18 @@ def run_pipeline(
             )
             chapters_md.append(chapter_md)
 
+            # Save chapter to disk immediately
+            _save_chapter_file(chapters_dir, ch_idx, outline_ch.title, chapter_md)
+            existing_chapters_local.add(ch_idx)
+
+            # Update indice with current progress
+            _write_indice(output_dir, outline_chapters, selected_chapters, existing_chapters_local)
+
         # Generate chapters for any uncovered topics
         for idx, topic in enumerate(topics):
             if idx not in covered_topic_indices:
+                # For uncovered topics we don't have an outline_ch index,
+                # so we always generate them (they weren't in the outline)
                 logger.info("  Generating chapter for uncovered topic: %s", topic.name)
                 topic_chunks = _collect_chunks_for_topic(topic, all_chunks, chunk_id_map)
                 topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)

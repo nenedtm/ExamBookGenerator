@@ -80,6 +80,7 @@ def _build_args(
     scope: str,
     topic: str | None,
     focus_depth: int,
+    chapters: str | None = None,
 ) -> Namespace:
     """Build an ``argparse.Namespace`` compatible with ``run_pipeline``."""
     return Namespace(
@@ -94,6 +95,8 @@ def _build_args(
         topic=topic,
         focus_depth=focus_depth,
         no_interactive=True,
+        chapters=chapters,
+        force=False,
     )
 
 
@@ -126,6 +129,16 @@ with st.sidebar:
     # Checkboxes
     include_images = st.checkbox("Include images from source material", value=True)
     include_toc = st.checkbox("Include table of contents", value=True)
+
+    st.divider()
+
+    # Chapter selection (for full mode)
+    st.subheader("📖 Capitoli")
+    chapter_selection = st.text_input(
+        "Capitoli da generare",
+        placeholder="es. 1,3,5 o lascia vuoto per tutti",
+        help="Numeri dei capitoli separati da virgola. Lascia vuoto per generare tutti.",
+    )
 
     st.divider()
 
@@ -222,6 +235,7 @@ if generate:
         syllabus_path = str(folder_path / syllabus_hint)
 
     # Build args
+    chapters_str = chapter_selection.strip() if chapter_selection.strip() else None
     args = _build_args(
         input_dir=input_folder,
         template=template_path,
@@ -232,6 +246,7 @@ if generate:
         scope=scope_value,
         topic=topic_name,
         focus_depth=focus_depth,
+        chapters=chapters_str,
     )
 
     # Progress UI
@@ -269,6 +284,22 @@ if generate:
         col3.metric("Warnings", summary["warnings"])
 
         st.success(f"Manual generated: `{output_path}`")
+
+        # Show indice if available
+        indice_path = Path("output/indice.md")
+        if indice_path.exists():
+            with st.expander("📖 Indice capitoli (indice.md)", expanded=False):
+                indice_text = indice_path.read_text(encoding="utf-8")
+                st.markdown(indice_text)
+
+        # Show individual chapters
+        chapters_dir = Path("output/chapters")
+        if chapters_dir.exists():
+            chapter_files = sorted(chapters_dir.glob("cap_*.md"))
+            if chapter_files:
+                with st.expander(f"📄 Capitoli individuali ({len(chapter_files)} file)", expanded=False):
+                    for cf in chapter_files:
+                        st.text(cf.name)
 
         # Download button
         manual_text = output_path.read_text(encoding="utf-8", errors="replace")
