@@ -30,25 +30,28 @@ def _try_parse_markdown_outline(text: str) -> dict | None:
         1. Section one
         2. Section two
 
+    Also handles bold markers, dash separators, bullet points, etc.
+
     Returns a dict with key "chapters" or None if parsing fails.
     """
     chapters: list[dict[str, object]] = []
     current_title: str | None = None
     current_sections: list[str] = []
 
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if not stripped:
-            continue
+    # Strip leading/trailing whitespace and remove empty leading lines
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
 
+    for line in lines:
         # Match chapter headings:
+        #   **Chapter 1: Title**   (bold markdown)
         #   ### Chapter 1: Title   (markdown)
         #   ## Chapter 1: Title    (markdown)
         #   Chapter 1: Title       (plain)
-        #   Chapter 1 - Title       (plain)
+        #   Chapter 1 - Title      (dash separator)
+        #   Chapter 1. Title       (dot separator)
         header_match = re.match(
-            r'^(?:#{2,3}\s+)?Chapter\s+\d+\s*[:\.]\s*(.+)',
-            stripped, re.IGNORECASE,
+            r'^\*{0,2}(?:#{2,3}\s+)?Chapter\s+\d+\s*[:.\-]\s*(.+?)\*{0,2}$',
+            line, re.IGNORECASE,
         )
         if header_match:
             if current_title and current_sections:
@@ -57,14 +60,29 @@ def _try_parse_markdown_outline(text: str) -> dict | None:
             current_sections = []
             continue
 
-        # Match numbered list items: 1. Section title or - Section title
-        if current_title is not None:
-            item_match = re.match(r'^\d+\.\s+\*?\*?(.+?)\*?\*?\s*$', stripped)
-            if item_match:
-                section = item_match.group(1).strip()
-                if section.lower() not in ("sections:", "sections"):
-                    current_sections.append(section)
-                    continue
+        if current_title is None:
+            continue
+
+        # Match numbered list items: 1. Section title
+        # Also handles bold: **1. Section** or *1. Section*
+        # Also handles sub-numbering: 1.1 Section, 1.1. Section
+        item_match = re.match(
+            r'^\*{0,2}\d+(?:\.\d+)*\.?\s+\*?\*?(.+?)\*?\*?\s*$',
+            line,
+        )
+        if item_match:
+            section = item_match.group(1).strip()
+            if section.lower() not in ("sections:", "sections"):
+                current_sections.append(section)
+                continue
+
+        # Match bullet points: - Section or * Section
+        bullet_match = re.match(r'^[-*]\s+\*?\*?(.+?)\*?\*?\s*$', line)
+        if bullet_match:
+            section = bullet_match.group(1).strip()
+            if section.lower() not in ("sections:", "sections"):
+                current_sections.append(section)
+                continue
 
     # Save last chapter
     if current_title and current_sections:
