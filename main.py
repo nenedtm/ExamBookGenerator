@@ -960,7 +960,412 @@ def run_pipeline(
     return output_path, validation
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
+# ── Split pipeline phases (for Streamlit two-phase flow) ────────────────────
+
+
+def run_outline_phase(
+    args: argparse.Namespace,
+    progress_callback: callable | None = None,
+) -> dict:
+    """Run steps 1-6: scan, parse, chunk, topic analysis, outline generation.
+
+    Returns a state dict with all intermediate data needed by
+    :func:`run_chapters_phase`.
+    """
+    def _progress(step: int, msg: str) -> None:
+        logger.info("Step %d/8: %s", step, msg)
+        if progress_callback:
+            progress_callback(step, msg)
+
+    # ── 1. Config ──────────────────────────────────────────────────────
+    cfg = ConfigManager()
+    if args.model:
+        cfg.set("llm.model", args.model)
+    if args.depth:
+        cfg.set("generation.depth_level", args.depth)
+
+    if args.model:
+        conn = _get_connection()
+        try:
+            row = conn.execute(
+                "SELECT DISTINCT model FROM processing_state WHERE model IS NOT NULL LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row["model"] != args.model:
+            clear_cache_for_model(row["model"])
+
+    # ── 2. Resolve scope ──────────────────────────────────────────────
+    scope = args.scope or "full"
+    focus_topic = args.topic
+    focus_depth = args.focus_depth or cfg.get("generation.depth_level", 5)
+    depth_level = cfg.get("generation.depth_level", 5)
+
+    if scope == "topic":
+        cfg.set("generation.scope", "topic")
+        cfg.set("generation.focus_topic", focus_topic or "")
+        cfg.set("generation.focus_depth_level", focus_depth)
+        effective_depth = focus_depth
+    else:
+        cfg.set("generation.scope", "full")
+        effective_depth = depth_level
+
+    # ── 3. Syllabus ──────────────────────────────────────────────────
+    syllabus_path = args.syllabus
+    if syllabus_path:
+        cfg.set("syllabus.enabled", "true")
+        cfg.set("syllabus.path", syllabus_path)
+    else:
+        cfg.set("syllabus.enabled", "auto")
+        cfg.set("syllabus.path", None)
+
+    # ── 4. Validate inputs ────────────────────────────────────────────
+    input_dir = Path(args.input)
+    template_path = Path(args.template)
+    output_dir = Path(args.output) if args.output else Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 5. Scan ───────────────────────────────────────────────────────
+    _progress(1, "Scanning input directory...")
+    syllabus_enabled = cfg.get("syllabus.enabled", "auto") != "false"
+    force = getattr(args, "force", False)
+
+    if force:
+        documents = scan_directory(
+            input_dir,
+            syllabus_enabled=syllabus_enabled,
+            syllabus_path=cfg.get("syllabus.path"),
+        )
+        new_hashes = {d.source_path for d in documents}
+        modified_hashes: set[str] = set()
+        unchanged_hashes: set[str] = set()
+    else:
+        documents, new_hashes, modified_hashes, unchanged_hashes = scan_directory_incremental(
+            input_dir,
+            syllabus_enabled=syllabus_enabled,
+            syllabus_path=cfg.get("syllabus.path"),
+        )
+
+    # ── 6. Parse ──────────────────────────────────────────────────────
+    _progress(2, "Parsing documents...")
+    docs_to_parse = []
+    cached_chunks_map: dict[str, list] = {}
+    file_hashes: dict[str, str] = {}
+
+    for doc in documents:
+        try:
+            fhash = compute_file_hash(Path(doc.source_path))
+            file_hashes[doc.source_path] = fhash
+        except (OSError, ValueError):
+            file_hashes[doc.source_path] = ""
+
+    for doc in documents:
+        fhash = file_hashes.get(doc.source_path, "")
+        if fhash in unchanged_hashes and not force:
+            state = get_processing_state(fhash)
+            if state and state["chunks_json"]:
+                cached_chunks_map[doc.source_path] = _chunks_from_cache(state["chunks_json"])
+                continue
+        docs_to_parse.append(doc)
+
+    parsed_docs, extracted_images = _parse_all(docs_to_parse)
+    non_empty = [d for d in parsed_docs if d.content.strip()]
+
+    # ── 7. Deduplicate + Chunk ────────────────────────────────────────
+    _progress(3, "Deduplicating...")
+    unique_docs = deduplicate(non_empty)
+
+    _progress(4, "Chunking documents...")
+    all_chunks = []
+    for src_path, chunks in cached_chunks_map.items():
+        all_chunks.extend(chunks)
+    for doc in parsed_docs:
+        if not doc.content.strip():
+            continue
+        chunks = create_chunks(doc)
+        all_chunks.extend(chunks)
+        fhash = file_hashes.get(doc.source_path, "")
+        if fhash:
+            save_processing_state(
+                fhash, doc.source_path, doc.file_type.value,
+                parsed=True, chunks_json=_chunks_to_cache(chunks),
+            )
+
+    # ── 8. Topic analysis ─────────────────────────────────────────────
+    _progress(5, "Analysing topics...")
+    client = OllamaClient.from_config(cfg)
+    analyzer = TopicAnalyzer(client, cfg)
+
+    syllabus_doc = None
+    if syllabus_enabled:
+        for d in parsed_docs:
+            if d.is_syllabus:
+                syllabus_doc = d
+                break
+
+    topics_changed = len(new_hashes) > 0 or len(modified_hashes) > 0
+    cached_topics = None
+
+    if not topics_changed and not force:
+        import json
+        conn = _get_connection()
+        try:
+            row = conn.execute(
+                "SELECT topics_json FROM processing_state WHERE topics_json IS NOT NULL "
+                "ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row["topics_json"]:
+            try:
+                raw_topics = json.loads(row["topics_json"])
+                cached_topics = [Topic(**t) for t in raw_topics]
+            except Exception:
+                cached_topics = None
+
+    if cached_topics and not topics_changed:
+        topics = cached_topics
+        chunk_id_map: dict[str, list[str]] = {}
+    else:
+        topics, chunk_id_map = analyzer.analyze(
+            all_chunks, syllabus_document=syllabus_doc,
+            scope=scope, focus_topic=focus_topic,
+        )
+        import json
+        try:
+            topics_json = json.dumps(
+                [{"name": t.name, "description": t.description,
+                  "related_documents": t.related_documents,
+                  "subtopic_count": t.subtopic_count,
+                  "order_source": t.order_source,
+                  "syllabus_position": t.syllabus_position,
+                  "missing_from_notes": t.missing_from_notes,
+                  "extra_in_notes": t.extra_in_notes}
+                 for t in topics],
+                ensure_ascii=False,
+            )
+            conn = _get_connection()
+            try:
+                conn.execute("UPDATE processing_state SET topics_json = ?", (topics_json,))
+                conn.commit()
+            finally:
+                conn.close()
+        except (TypeError, AttributeError):
+            pass
+
+    # ── 9. Outline ────────────────────────────────────────────────────
+    _progress(6, "Generating outline...")
+    outline_gen = OutlineGenerator(client, cfg)
+
+    outline_cached = False
+    if not topics_changed and not force:
+        outline_path = output_dir / "outline.md"
+        if outline_path.exists():
+            try:
+                existing_outline = outline_path.read_text(encoding="utf-8")
+                if existing_outline.strip():
+                    outline_cached = True
+                    _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+            except Exception:
+                pass
+
+    if not outline_cached:
+        _, index_entries, outline_chapters = outline_gen.generate(topics, scope=scope)
+
+    # ── 10. Write indice ──────────────────────────────────────────────
+    chapters_dir = output_dir / "chapters"
+    existing_chapters = _load_existing_chapters(chapters_dir, len(outline_chapters))
+    _write_indice(output_dir, outline_chapters, None, existing_chapters)
+
+    template = load_template(template_path)
+
+    return {
+        "topics": topics,
+        "all_chunks": all_chunks,
+        "extracted_images": extracted_images,
+        "outline_chapters": outline_chapters,
+        "index_entries": index_entries,
+        "client": client,
+        "cfg": cfg,
+        "template": template,
+        "scope": scope,
+        "effective_depth": effective_depth,
+        "focus_topic": focus_topic,
+        "args": args,
+        "chunk_id_map": chunk_id_map,
+        "output_dir": output_dir,
+        "chapters_dir": chapters_dir,
+        "existing_chapters": existing_chapters,
+    }
+
+
+def run_chapters_phase(
+    state: dict,
+    selected_indices: set[int] | None = None,
+    progress_callback: callable | None = None,
+) -> tuple[Path, dict]:
+    """Run steps 7-8: chapter generation + merge.
+
+    Parameters
+    ----------
+    state:
+        The state dict returned by :func:`run_outline_phase`.
+    selected_indices:
+        0-based indices of chapters to generate. ``None`` means all.
+    progress_callback:
+        Optional ``(step: int, message: str)`` callback.
+
+    Returns
+    -------
+    tuple[Path, dict]
+        ``(output_path, validation)`` — same as :func:`run_pipeline`.
+    """
+    def _progress(step: int, msg: str) -> None:
+        logger.info("Step %d/8: %s", step, msg)
+        if progress_callback:
+            progress_callback(step, msg)
+
+    topics = state["topics"]
+    all_chunks = state["all_chunks"]
+    extracted_images = state["extracted_images"]
+    outline_chapters = state["outline_chapters"]
+    index_entries = state["index_entries"]
+    client = state["client"]
+    cfg = state["cfg"]
+    template = state["template"]
+    scope = state["scope"]
+    effective_depth = state["effective_depth"]
+    focus_topic = state["focus_topic"]
+    args = state["args"]
+    chunk_id_map = state["chunk_id_map"]
+    output_dir = state["output_dir"]
+    chapters_dir = state["chapters_dir"]
+
+    _progress(7, "Generating chapters...")
+    chapters_md: list[str] = []
+    covered_topic_indices: set[int] = set()
+
+    existing_chapters_local = _load_existing_chapters(chapters_dir, len(outline_chapters))
+    selected_chapters_local = selected_indices
+
+    if scope == "topic":
+        for topic in topics:
+            logger.info("  Generating chapter: %s", topic.name)
+            topic_chunks = _collect_chunks_for_topic(topic, all_chunks, chunk_id_map)
+            topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
+            chapter_md, _, _ = generate_chapter(
+                topic, topic_chunks, template,
+                depth_level=effective_depth,
+                candidate_images=topic_images,
+                scope=scope, client=client, cfg=cfg,
+            )
+            chapters_md.append(chapter_md)
+    else:
+        for ch_idx, outline_ch in enumerate(outline_chapters):
+            if selected_chapters_local is not None and ch_idx not in selected_chapters_local:
+                logger.info("  Skipping chapter %d: %s (not selected)", ch_idx + 1, outline_ch.title)
+                continue
+
+            if ch_idx in existing_chapters_local:
+                logger.info("  Chapter %d: %s — already on disk", ch_idx + 1, outline_ch.title)
+                chapter_path = chapters_dir / _chapter_filename(ch_idx, outline_ch.title)
+                if chapter_path.exists():
+                    chapters_md.append(chapter_path.read_text(encoding="utf-8"))
+                continue
+
+            logger.info("  Generating chapter %d: %s", ch_idx + 1, outline_ch.title)
+
+            matched_topics = [
+                topics[i] for i in outline_ch.topic_indices if i < len(topics)
+            ]
+            for i in outline_ch.topic_indices:
+                if i < len(topics):
+                    covered_topic_indices.add(i)
+
+            all_topic_chunks = []
+            all_topic_images = []
+            for t in matched_topics:
+                all_topic_chunks.extend(_collect_chunks_for_topic(t, all_chunks, chunk_id_map))
+                all_topic_images.extend(_collect_images_for_topic(t, extracted_images, args.no_images))
+
+            if not matched_topics and topics:
+                best_topic = _find_closest_topic_for_chapter(outline_ch.title, topics, covered_topic_indices)
+                if best_topic:
+                    idx = topics.index(best_topic)
+                    covered_topic_indices.add(idx)
+                    all_topic_chunks.extend(_collect_chunks_for_topic(best_topic, all_chunks, chunk_id_map))
+                    all_topic_images.extend(_collect_images_for_topic(best_topic, extracted_images, args.no_images))
+                    matched_topics.append(best_topic)
+
+            seen_content: set[str] = set()
+            unique_chunks = []
+            for c in all_topic_chunks:
+                if c.content not in seen_content:
+                    seen_content.add(c.content)
+                    unique_chunks.append(c)
+
+            seen_img_ids: set[str] = set()
+            unique_images = []
+            for img in all_topic_images:
+                if img.id not in seen_img_ids:
+                    seen_img_ids.add(img.id)
+                    unique_images.append(img)
+
+            primary_topic = matched_topics[0] if matched_topics else Topic(
+                name=outline_ch.title, description=outline_ch.title,
+            )
+            chapter_entries = _build_chapter_local_entries(outline_ch)
+
+            chapter_md, _, _ = generate_chapter(
+                primary_topic, unique_chunks, template,
+                depth_level=effective_depth,
+                candidate_images=unique_images if not args.no_images else [],
+                index_entries=chapter_entries,
+                outline_chapter=outline_ch,
+                scope="full", client=client, cfg=cfg,
+            )
+            chapters_md.append(chapter_md)
+            _save_chapter_file(chapters_dir, ch_idx, outline_ch.title, chapter_md)
+            existing_chapters_local.add(ch_idx)
+            _write_indice(output_dir, outline_chapters, selected_chapters_local, existing_chapters_local)
+
+        for idx, topic in enumerate(topics):
+            if idx not in covered_topic_indices:
+                logger.info("  Generating chapter for uncovered topic: %s", topic.name)
+                topic_chunks = _collect_chunks_for_topic(topic, all_chunks, chunk_id_map)
+                topic_images = _collect_images_for_topic(topic, extracted_images, args.no_images)
+                chapter_md, _, _ = generate_chapter(
+                    topic, topic_chunks, template,
+                    depth_level=effective_depth,
+                    candidate_images=topic_images if not args.no_images else [],
+                    scope=scope, client=client, cfg=cfg,
+                )
+                chapters_md.append(chapter_md)
+
+    # ── Merge ──────────────────────────────────────────────────────────
+    _progress(8, "Assembling final output...")
+    output_path = merge_chapters(
+        chapters_md, index_entries, cfg,
+        topics=topics,
+        focus_topic=focus_topic if scope == "topic" else None,
+    )
+
+    # ── Validate ───────────────────────────────────────────────────────
+    _progress(8, "Running validation...")
+    manual_text = output_path.read_text(encoding="utf-8", errors="replace")
+    chapters_meta = [
+        {"title": t.name, "order": i, "syllabus_position": getattr(t, "syllabus_position", None)}
+        for i, t in enumerate(topics)
+    ]
+    validation = validate_manual(
+        manual_text, topics, cfg,
+        images=extracted_images if not args.no_images else None,
+        chapters_meta=chapters_meta,
+    )
+
+    logger.info("Output: %s", output_path.resolve())
+    logger.info("Validation: %s", validation["overall"])
+    return output_path, validation
 
 
 def main() -> None:
