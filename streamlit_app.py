@@ -295,10 +295,9 @@ if st.session_state.phase == "outline_done" and st.session_state.outline_state i
 
         col_check, col_title = st.columns([1, 5])
         with col_check:
-            default_val = st.session_state.chapter_selection.get(i, True)
             st.session_state.chapter_selection[i] = st.checkbox(
                 f"Cap. {i + 1}",
-                value=default_val,
+                value=st.session_state.chapter_selection.get(i, True),
                 key=f"ch_check_{i}",
             )
         with col_title:
@@ -311,19 +310,17 @@ if st.session_state.phase == "outline_done" and st.session_state.outline_state i
             st.markdown("---")
 
     # Select all / deselect all
+    def _toggle_all(val: bool) -> None:
+        n = len(st.session_state.outline_state["outline_chapters"])
+        for i in range(n):
+            st.session_state.chapter_selection[i] = val
+            st.session_state[f"ch_check_{i}"] = val
+
     col_sel, col_desel = st.columns(2)
     with col_sel:
-        if st.button("✅ Seleziona tutti", use_container_width=True):
-            for i in range(len(outline_chapters)):
-                st.session_state.chapter_selection[i] = True
-                st.session_state[f"ch_check_{i}"] = True
-            st.rerun()
+        st.button("✅ Seleziona tutti", on_click=_toggle_all, args=(True,), use_container_width=True)
     with col_desel:
-        if st.button("❌ Deseleziona tutti", use_container_width=True):
-            for i in range(len(outline_chapters)):
-                st.session_state.chapter_selection[i] = False
-                st.session_state[f"ch_check_{i}"] = False
-            st.rerun()
+        st.button("❌ Deseleziona tutti", on_click=_toggle_all, args=(False,), use_container_width=True)
 
     # Generate manual button
     st.divider()
