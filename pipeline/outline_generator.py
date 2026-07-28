@@ -509,51 +509,93 @@ class OutlineGenerator:
     ) -> tuple[str, list[IndexEntry], list[OutlineChapter]]:
         """Build outline directly from syllabus-derived topics.
 
-        Each topic becomes exactly one chapter, preserving syllabus order.
-        No LLM call is made.
-
         When *syllabus_text* is provided, the section structure is extracted
         from the syllabus text so that each chapter's sub-sections match
-        the syllabus exactly.
+        the syllabus exactly.  Topics corresponding to syllabus sections are
+        folded into their parent chapter (not turned into separate chapters).
+        No LLM call is made.
         """
-        # Try to extract hierarchical chapter+section structure from syllabus
         syllabus_structure: list[dict[str, object]] = []
         if syllabus_text:
             syllabus_structure = self._parse_syllabus_structure(syllabus_text)
 
-        # Build (chapter_dict, topic_index) pairs
-        chapter_topic_pairs: list[tuple[dict[str, object], int]] = []
+        # (chapter_dict, list_of_topic_indices) pairs
+        chapter_topic_pairs: list[tuple[dict[str, object], list[int]]] = []
 
         if syllabus_structure:
-            # Match parsed chapters to topics by name similarity
+            # Collect all section titles from the parsed structure (lowercased)
+            all_section_titles: set[str] = set()
+            for ch in syllabus_structure:
+                for sec in ch.get("sections", []):
+                    t = sec.lower().strip()
+                    if t:
+                        all_section_titles.add(t)
+
             used_indices: set[int] = set()
+
             for parsed_ch in syllabus_structure:
                 parsed_title = str(parsed_ch.get("title", "")).strip()
                 parsed_sections = list(parsed_ch.get("sections", []))
 
-                best_idx = self._find_topic_for_chapter(parsed_title, topics, used_indices)
-                if best_idx is not None:
-                    used_indices.add(best_idx)
-                    chapter_topic_pairs.append((
-                        {"title": topics[best_idx].name, "sections": parsed_sections},
-                        best_idx,
-                    ))
+                # Find main topic for this chapter
+                ch_idx = self._find_topic_for_chapter(
+                    parsed_title, topics, used_indices,
+                )
 
-            # Remaining topics (not matched to any parsed chapter) become
-            # individual chapters with no sections
+                # Find topics matching each section title
+                section_indices: list[int] = []
+                skip = {ch_idx} if ch_idx is not None else set()
+                for sec_title in parsed_sections:
+                    sec_idx = self._find_topic_for_chapter(
+                        sec_title, topics, used_indices | skip,
+                    )
+                    if sec_idx is not None:
+                        section_indices.append(sec_idx)
+                        skip.add(sec_idx)
+
+                # Collect all topic indices for this chapter
+                all_ch_indices: list[int] = []
+                if ch_idx is not None:
+                    used_indices.add(ch_idx)
+                    all_ch_indices.append(ch_idx)
+                for si in section_indices:
+                    used_indices.add(si)
+                    all_ch_indices.append(si)
+
+                name = topics[ch_idx].name if ch_idx is not None else parsed_title
+                chapter_topic_pairs.append((
+                    {"title": name, "sections": parsed_sections},
+                    all_ch_indices,
+                ))
+
+            # Remaining topics: skip section items (already absorbed),
+            # turn everything else into individual chapters
             for i, topic in enumerate(topics):
-                if i not in used_indices:
-                    chapter_topic_pairs.append((
-                        {"title": topic.name, "sections": []},
-                        i,
-                    ))
-        else:
-            # Flat syllabus: each topic → one chapter, no sections
-            for i, topic in enumerate(topics):
+                if i in used_indices:
+                    continue
+                topic_lower = topic.name.lower().strip()
+                if topic_lower in all_section_titles:
+                    # Find which chapter this section belongs to and add
+                    # the index there instead
+                    for pair in chapter_topic_pairs:
+                        ch_sections = [s.lower().strip() for s in pair[0].get("sections", [])]
+                        if topic_lower in ch_sections:
+                            pair[1].append(i)
+                            used_indices.add(i)
+                            break
+                    if i in used_indices:
+                        continue
+                # Truly leftover: individual chapter
                 chapter_topic_pairs.append((
                     {"title": topic.name, "sections": []},
-                    i,
+                    [i],
                 ))
+        else:
+            # Flat syllabus: each topic → one chapter
+            chapter_topic_pairs = [
+                ({"title": topic.name, "sections": []}, [i])
+                for i, topic in enumerate(topics)
+            ]
 
         raw_chapters = [pair[0] for pair in chapter_topic_pairs]
 
@@ -562,11 +604,11 @@ class OutlineGenerator:
 
         # Build OutlineChapter objects with correct topic index mapping
         outline_chapters: list[OutlineChapter] = []
-        for ch_dict, topic_idx in chapter_topic_pairs:
+        for ch_dict, topic_indices in chapter_topic_pairs:
             outline_chapters.append(OutlineChapter(
                 title=str(ch_dict["title"]),
                 sections=list(ch_dict.get("sections", [])),
-                topic_indices=[topic_idx],
+                topic_indices=topic_indices,
             ))
 
         outline_md = _render_outline_md(entries)
@@ -759,11 +801,29 @@ class OutlineGenerator:
         """Find the best topic index matching *chapter_title*.
 
         Uses multi-strategy matching: exact match (case-insensitive),
-        substring containment, and word overlap.  Skips already-used indices.
+        substring containment, and word overlap (minimum 2 overlapping
+        content words).  Skips already-used indices.
         """
         import re as _re
+
+        _STOPWORDS: frozenset[str] = frozenset({
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
+            "for", "of", "by", "with", "from", "as", "is", "are", "was",
+            "were", "be", "been", "being", "have", "has", "had", "do",
+            "does", "did", "will", "would", "can", "could", "shall",
+            "should", "may", "might", "this", "that", "these", "those",
+            "it", "its", "they", "them", "their", "we", "our", "you",
+            "your", "he", "she", "him", "her", "his", "not", "no",
+            "nor", "all", "each", "every", "some", "any", "both",
+            "few", "more", "most", "other", "into", "over", "such",
+            "than", "then", "just", "about", "also", "very", "chapter",
+        })
+
         title_lower = chapter_title.lower().strip()
-        title_words = {w for w in _re.split(r"[^a-z0-9]+", title_lower) if len(w) >= 2}
+        title_words = {
+            w for w in _re.split(r"[^a-z0-9]+", title_lower)
+            if len(w) >= 3 and w not in _STOPWORDS
+        }
         best_idx: int | None = None
         best_score = 0.0
 
@@ -785,16 +845,20 @@ class OutlineGenerator:
                     best_idx = i
                     best_score = score
 
-            # Word overlap
-            name_words = {w for w in _re.split(r"[^a-z0-9]+", name_lower) if len(w) >= 2}
+            # Word overlap (minimum 2 overlapping content words)
+            name_words = {
+                w for w in _re.split(r"[^a-z0-9]+", name_lower)
+                if len(w) >= 3 and w not in _STOPWORDS
+            }
             if title_words and name_words:
                 overlap = len(title_words & name_words)
-                score = overlap / max(len(title_words), len(name_words))
-                if score > best_score:
-                    best_idx = i
-                    best_score = score
+                if overlap >= 2:
+                    score = overlap / max(len(title_words), len(name_words))
+                    if score > best_score:
+                        best_idx = i
+                        best_score = score
 
-        return best_idx if best_score >= 0.25 else None
+        return best_idx if best_score >= 0.3 else None
 
     # ── Internals ───────────────────────────────────────────────────────
 
