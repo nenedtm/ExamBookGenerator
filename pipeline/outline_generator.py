@@ -750,6 +750,21 @@ class OutlineGenerator:
                 current_sections = []
                 continue
 
+            # Markdown header with number but no keyword: ### 1. Title, ## 1. Title
+            if ch_match is None:
+                hdr_match = re.match(
+                    r'^#{1,3}\s+\d+[\.\)]\s+(.+?)\*{0,2}$', stripped,
+                )
+                if hdr_match:
+                    if current_title is not None:
+                        chapters.append({
+                            "title": current_title,
+                            "sections": current_sections,
+                        })
+                    current_title = hdr_match.group(1).strip()
+                    current_sections = []
+                    continue
+
             if current_title is None:
                 continue
 
