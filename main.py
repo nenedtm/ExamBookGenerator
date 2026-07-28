@@ -245,7 +245,7 @@ def _write_indice(
     selected: set[int] | None,
     existing: set[int],
 ) -> Path:
-    """Write ``output/indice.md`` with numbered chapters and status marks.
+    """Write ``output/indice.md`` with numbered chapters, sections and status.
 
     ``selected`` is *None* meaning all, or a set of 0-based indices.
     ``existing`` is the set of 0-based indices already on disk.
@@ -259,6 +259,8 @@ def _write_indice(
     for i, ch in enumerate(outline_chapters):
         mark = "[X]" if i in existing else "[ ]"
         lines.append(f"- {mark} {i + 1}. {ch.title}")
+        for sec in ch.sections:
+            lines.append(f"    - {sec}")
     lines.append("")
 
     out_path = output_dir / "indice.md"
@@ -268,16 +270,19 @@ def _write_indice(
 
 
 def _ask_chapter_selection(outline_chapters: list, existing: set[int]) -> set[int] | None:
-    """Interactive prompt: show numbered chapters and ask user to select.
+    """Interactive prompt: show numbered chapters with sections and ask user to select.
 
     Returns None for "all", or a set of 0-based indices.
     """
     print("\n--- Selezione Capitoli ---")
+    print("   (i numeri tra parentesi indicano i capitoli da generare)\n")
     for i, ch in enumerate(outline_chapters):
         status = "  [gia' generato]" if i in existing else ""
         print(f"  [{i + 1}] {ch.title}{status}")
+        for sec in ch.sections:
+            print(f"       - {sec}")
+        print()
 
-    print()
     raw = input(
         "Capitoli da generare (numeri separati da virgola, o Invio per tutti): "
     ).strip()
