@@ -270,21 +270,23 @@ def _write_indice(
 
 
 def _ask_chapter_selection(outline_chapters: list, existing: set[int]) -> set[int] | None:
-    """Interactive prompt: show numbered chapters with sections and ask user to select.
+    """Interactive prompt: show full indice and ask user to select chapters.
 
     Returns None for "all", or a set of 0-based indices.
     """
-    print("\n--- Selezione Capitoli ---")
-    print("   (i numeri tra parentesi indicano i capitoli da generare)\n")
+    print("\n" + "=" * 60)
+    print("  INDICE DEL MANUALE")
+    print("=" * 60)
     for i, ch in enumerate(outline_chapters):
         status = "  [gia' generato]" if i in existing else ""
-        print(f"  [{i + 1}] {ch.title}{status}")
+        print(f"\n  [{i + 1}] {ch.title}{status}")
         for sec in ch.sections:
             print(f"       - {sec}")
-        print()
+    print("\n" + "=" * 60)
 
     raw = input(
-        "Capitoli da generare (numeri separati da virgola, o Invio per tutti): "
+        "\nSeleziona i capitoli da generare (numeri separati da virgola, "
+        "o Invio per generare tutti): "
     ).strip()
 
     if not raw:
