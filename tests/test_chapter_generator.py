@@ -8,13 +8,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Chunk, ExtractedImage, IndexEntry, Topic
+from core.models import Chunk, ExtractedImage, IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaError
 from pipeline.chapter_generator import (
     ChapterGeneratorError,
+    _align_outline_headings,
     _build_chapter_index,
     _find_insertion_index,
     _insert_images,
+    _missing_outline_sections,
     _parse_chapter_response,
     _slugify,
     generate_chapter,
@@ -148,6 +150,59 @@ class TestParseChapterResponse:
     def test_invalid_json_raises(self) -> None:
         with pytest.raises(ChapterGeneratorError, match="unrecognisable JSON"):
             _parse_chapter_response("not json at all {{{")
+
+
+# ── _missing_outline_sections ────────────────────────────────────────────────
+
+class TestMissingOutlineSections:
+    def test_all_present(self) -> None:
+        content = "## T\n\nIntro.\n\n### Vector Spaces\n\nText.\n\n### Eigenvalues\n\nMore."
+        assert _missing_outline_sections(content, ["Vector Spaces", "Eigenvalues"]) == []
+
+    def test_case_and_punctuation_insensitive(self) -> None:
+        content = "## T\n\n### vEcToR spaces!\n\nText."
+        assert _missing_outline_sections(content, ["Vector Spaces"]) == []
+
+    def test_missing_sections_reported(self) -> None:
+        content = "## T\n\n### Vector Spaces\n\nText."
+        assert _missing_outline_sections(content, ["Vector Spaces", "Eigenvalues"]) == ["Eigenvalues"]
+
+
+# ── _align_outline_headings ──────────────────────────────────────────────────
+
+class TestAlignOutlineHeadings:
+    def test_renames_title_heading(self) -> None:
+        content = "## LLM Invented Title\n\nIntro.\n\n### Something\n\nText."
+        aligned = _align_outline_headings(content, "Real Title", ["Something"])
+        assert "## Real Title" in aligned
+        assert "### Something" in aligned
+
+    def test_renames_sections_to_exact_outline_titles(self) -> None:
+        content = (
+            "## T\n\nIntro.\n\n"
+            "### Simulazione del processo Polya\n\nText.\n\n"
+            "### Reti Bayesiane\n\nText."
+        )
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            [
+                "Simulazione della passeggiata aleatoria di Polya",
+                "Cenni sulle reti Bayesiane",
+            ],
+        )
+        assert "### Simulazione della passeggiata aleatoria di Polya" in aligned
+        assert "### Cenni sulle reti Bayesiane" in aligned
+
+    def test_unrelated_headings_kept_untouched(self) -> None:
+        content = "## T\n\nIntro.\n\n### The Mathematics of Random Cube Solving\n\nText."
+        aligned = _align_outline_headings(content, "Real Title", ["Introduzione euristica"])
+        assert "## Real Title" in aligned
+        assert "### The Mathematics of Random Cube Solving" in aligned
+
+    def test_no_headings_returns_unchanged(self) -> None:
+        content = "Just prose with no headings at all."
+        assert _align_outline_headings(content, "Title", ["Section"]) == content
 
 
 # ── _build_chapter_index ─────────────────────────────────────────────────────
@@ -309,6 +364,75 @@ class TestGenerateChapterFull:
         # LLM sections should NOT appear in TOC when custom entries are given
         assert "- [Vector Spaces](#vector-spaces)" not in md
         assert "- [Eigenvalues](#eigenvalues)" not in md
+
+    def test_outline_chapter_forces_title(self) -> None:
+        """The outline title must be used even if the LLM invents another one."""
+        llm_response = json.dumps({
+            "title": "LLM Invented Title",
+            "content": (
+                "## LLM Invented Title\n\n"
+                "Introduction paragraph with real body text.\n\n"
+                "More body text explaining the topic in detail.\n\n"
+                "### Distribuzione invariante\n\n"
+                "Body text about the invariant distribution with details.\n\n"
+                "### Teorema limite\n\n"
+                "Body text about the limit theorem with details.\n"
+            ),
+            "sections": ["Distribuzione invariante", "Teorema limite"],
+        })
+        client = _mock_client(llm_response)
+        topic = _make_topic()
+        chunks = _make_chunks()
+        outline = OutlineChapter(
+            title="Catene di Markov",
+            sections=["Distribuzione invariante", "Teorema limite"],
+            topic_indices=[0],
+        )
+
+        md, title, _ = generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full",
+            outline_chapter=outline, client=client,
+        )
+
+        assert title == "Catene di Markov"
+        assert "# Catene di Markov" in md
+
+    def test_outline_chapter_retries_until_sections_present(self) -> None:
+        """A response missing required sections triggers a retry."""
+        bad = json.dumps({
+            "title": "X",
+            "content": (
+                "## X\n\nIntro.\n\n"
+                "### Vector Spaces\n\n"
+                "Paragraph one with real body text.\n\n"
+                "Paragraph two with real body text.\n\n"
+                "Paragraph three with real body text.\n"
+            ),
+            "sections": ["Vector Spaces"],
+        })
+        good = _llm_chapter_response()
+        client = _mock_client()
+        client.generate.side_effect = [bad, good]
+        topic = _make_topic()
+        chunks = _make_chunks()
+        outline = OutlineChapter(
+            title="Linear Algebra",
+            sections=["Vector Spaces", "Eigenvalues"],
+            topic_indices=[0],
+        )
+
+        md, title, _ = generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full",
+            outline_chapter=outline, client=client,
+        )
+
+        assert client.generate.call_count == 2
+        assert title == "Linear Algebra"
+        # Second (compliant) response accepted
+        assert "### Eigenvalues" in md
+        assert "# Linear Algebra" in md
 
 
 # ── generate_chapter — topic (focus) mode ────────────────────────────────────
