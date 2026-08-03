@@ -5,7 +5,7 @@ output:
 llm:
   host: "http://127.0.0.1:11434"
   model: "qwen3:latest"
-  timeout: 2700
+  timeout: 7200
   max_retries: 2
 
 structure:

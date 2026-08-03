@@ -645,50 +645,74 @@ def generate_chapter(
     )
     parsed = None
     for attempt in range(5):
-        raw_response = client.generate(
-            prompt,
-            options={"num_predict": num_predict},
-        )
         problems: list[str] = []
+        escalate = False
         try:
-            candidate = _parse_chapter_response(raw_response)
-            # Verify the content has actual body text, not just headings
-            content_str = str(candidate.get("content", "")).strip()
-            if not _has_meaningful_content(content_str):
-                problems.append(
-                    "The content field contained only headings without "
-                    "body paragraphs."
-                )
-            # Verify the chapter follows the planned outline structure.
-            # Align headings to the outline first so the structural check
-            # is language-agnostic: if the model translated the syllabus
-            # headings (English body vs Italian outline), the positional
-            # fallback in ``_align_outline_headings`` restores them.
-            if outline_chapter is not None:
-                content_str = _align_outline_headings(
-                    content_str, outline_chapter.title, outline_chapter.sections,
-                )
-                candidate["content"] = content_str
-                missing = _missing_outline_sections(
-                    content_str, outline_chapter.sections,
-                )
-                if missing:
-                    problems.append(
-                        "The chapter is missing the following REQUIRED "
-                        "section headings: " + "; ".join(missing) + "."
-                    )
-            if not problems:
-                parsed = candidate
-                break
+            raw_response = client.generate(
+                prompt,
+                options={"num_predict": num_predict},
+            )
+        except OllamaError as exc:
+            # Transient Ollama failure (timeout / connection / response
+            # error).  Do NOT blow up the token budget — retry the same
+            # request on the next attempt.
+            problems.append(f"The LLM request failed: {exc}")
             logger.warning(
-                "Chapter for '%s' failed validation (attempt %d): %s",
+                "Chapter for '%s' failed (attempt %d): %s",
                 topic.name, attempt + 1, "; ".join(problems),
             )
-        except ChapterGeneratorError:
-            problems.append("The JSON was invalid or missing required keys.")
+        else:
+            try:
+                candidate = _parse_chapter_response(raw_response)
+                # Verify the content has actual body text, not just headings
+                content_str = str(candidate.get("content", "")).strip()
+                if not _has_meaningful_content(content_str):
+                    problems.append(
+                        "The content field contained only headings without "
+                        "body paragraphs."
+                    )
+                # Verify the chapter follows the planned outline structure.
+                # Align headings to the outline first so the structural check
+                # is language-agnostic: if the model translated the syllabus
+                # headings (English body vs Italian outline), the positional
+                # fallback in ``_align_outline_headings`` restores them.
+                if outline_chapter is not None:
+                    content_str = _align_outline_headings(
+                        content_str, outline_chapter.title, outline_chapter.sections,
+                    )
+                    candidate["content"] = content_str
+                    missing = _missing_outline_sections(
+                        content_str, outline_chapter.sections,
+                    )
+                    if missing:
+                        problems.append(
+                            "The chapter is missing the following REQUIRED "
+                            "section headings: " + "; ".join(missing) + "."
+                        )
+                if not problems:
+                    parsed = candidate
+                    break
+                logger.warning(
+                    "Chapter for '%s' failed validation (attempt %d): %s",
+                    topic.name, attempt + 1, "; ".join(problems),
+                )
+            except ChapterGeneratorError:
+                # Invalid / truncated JSON — a larger budget may help the
+                # model finish the chapter (escalation below).
+                problems.append("The JSON was invalid or missing required keys.")
+                escalate = True
+                logger.warning(
+                    "Chapter for '%s' produced invalid JSON (attempt %d)",
+                    topic.name, attempt + 1,
+                )
 
         if attempt < 4:
-            num_predict = int(num_predict * 1.5)
+            # Structural failures (missing headings, empty sections) are
+            # fixed by the feedback below, not by more tokens — escalating
+            # the budget then only slows generation down and can time out.
+            # Only invalid / truncated JSON escalates, with a hard cap.
+            if escalate:
+                num_predict = min(int(num_predict * 1.5), 196608)
             # Build feedback about what went wrong
             feedback = (
                 "\n\n## CRITICAL ERROR IN PREVIOUS ATTEMPT\n\n"
