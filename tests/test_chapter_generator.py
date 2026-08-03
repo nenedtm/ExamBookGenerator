@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.models import Chunk, ExtractedImage, IndexEntry, OutlineChapter, Topic
+from core.models import Chunk, Document, ExtractedImage, IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaError
 from pipeline.chapter_generator import (
     ChapterGeneratorError,
@@ -19,6 +19,7 @@ from pipeline.chapter_generator import (
     _missing_outline_sections,
     _parse_chapter_response,
     _slugify,
+    build_sources_block,
     generate_chapter,
 )
 
@@ -93,6 +94,49 @@ def _mock_client(llm_response: str | None = None) -> MagicMock:
     client = MagicMock()
     client.generate.return_value = llm_response or _llm_chapter_response()
     return client
+
+
+# ── build_sources_block ──────────────────────────────────────────────────────
+
+
+class TestBuildSourcesBlock:
+    def test_lists_documents_in_order_of_appearance(self) -> None:
+        chunks = [
+            Chunk(document_id="doc-b", content="...", position=0),
+            Chunk(document_id="doc-a", content="...", position=1),
+            Chunk(document_id="doc-a", content="...", position=2),
+        ]
+        docs = [
+            Document(id="doc-a", title="Notes A", source_path="/data/a.md"),
+            Document(id="doc-b", title="Notes B", source_path="/data/b.md"),
+        ]
+        block = build_sources_block(chunks, docs)
+        assert block == (
+            "1. Notes B — `/data/b.md`\n"
+            "2. Notes A — `/data/a.md`"
+        )
+
+    def test_deduplicates_documents(self) -> None:
+        chunks = [Chunk(document_id="doc-a", content="x", position=0)]
+        docs = [
+            Document(id="doc-a", title="A", source_path="/a.md"),
+            Document(id="doc-a", title="A", source_path="/a.md"),
+        ]
+        assert build_sources_block(chunks, docs) == "1. A — `/a.md`"
+
+    def test_excludes_syllabus_documents(self) -> None:
+        chunks = [Chunk(document_id="doc-a", content="x", position=0)]
+        docs = [Document(id="doc-a", title="A", source_path="/a.md", is_syllabus=True)]
+        assert build_sources_block(chunks, docs) == ""
+
+    def test_empty_when_no_chunks_or_documents(self) -> None:
+        assert build_sources_block([], None) == ""
+        assert build_sources_block([Chunk(document_id="d", content="x", position=0)], None) == ""
+
+    def test_unknown_document_id_skipped(self) -> None:
+        chunks = [Chunk(document_id="ghost", content="x", position=0)]
+        docs = [Document(id="doc-a", title="A", source_path="/a.md")]
+        assert build_sources_block(chunks, docs) == ""
 
 
 # ── _slugify ─────────────────────────────────────────────────────────────────
@@ -346,6 +390,52 @@ class TestGenerateChapterFull:
         assert "Write a comprehensive" in call_args
         assert "Linear Algebra" in call_args
 
+    def test_sources_rendered_in_output(self) -> None:
+        client = _mock_client()
+        topic = _make_topic()
+        chunks = _make_chunks()
+        docs = [Document(id="doc-1", title="Linear Algebra Notes", source_path="/data/la.md")]
+        template = "# {{title}}\n\n{{content}}\n\n## References\n\n{{sources}}"
+
+        md, _, _ = generate_chapter(
+            topic, chunks, template,
+            depth_level=5, scope="full",
+            client=client, documents=docs,
+        )
+
+        assert "## References" in md
+        assert "1. Linear Algebra Notes — `/data/la.md`" in md
+
+    def test_sources_passed_to_prompt(self) -> None:
+        client = _mock_client()
+        topic = _make_topic()
+        chunks = _make_chunks()
+        docs = [Document(id="doc-1", title="Linear Algebra Notes", source_path="/data/la.md")]
+
+        generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full",
+            client=client, documents=docs,
+        )
+
+        call_args = client.generate.call_args[0][0]
+        assert "SOURCES TO CITE" in call_args
+        assert "Linear Algebra Notes" in call_args
+        assert "Cite them inline in the text as [1], [2]" in call_args
+
+    def test_no_sources_without_documents(self) -> None:
+        client = _mock_client()
+        topic = _make_topic()
+        chunks = _make_chunks()
+
+        generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full", client=client,
+        )
+
+        call_args = client.generate.call_args[0][0]
+        assert "SOURCES TO CITE" not in call_args
+
     def test_custom_index_entries_used(self) -> None:
         client = _mock_client()
         topic = _make_topic()
@@ -470,6 +560,25 @@ class TestGenerateChapterFocus:
         assert "- [Focus: Vector Spaces](#focus-vector-spaces)" in md
         assert "- [Definition](#definition)" in md
         assert "- [Properties](#properties)" in md
+
+    def test_focus_sources_passed_to_prompt_and_output(self) -> None:
+        client = _mock_client(_llm_focus_response())
+        topic = _make_topic(name="Vector Spaces")
+        chunks = _make_chunks()
+        docs = [Document(id="doc-1", title="Vector Notes", source_path="/data/v.md")]
+        template = "# {{title}}\n\n{{content}}\n\n## References\n\n{{sources}}"
+
+        md, _, _ = generate_chapter(
+            topic, chunks, template,
+            depth_level=8,
+            scope="topic",
+            client=client, documents=docs,
+        )
+
+        call_args = client.generate.call_args[0][0]
+        assert "SOURCES TO CITE" in call_args
+        assert "Vector Notes" in call_args
+        assert "1. Vector Notes — `/data/v.md`" in md
 
 
 # ── generate_chapter — image insertion ───────────────────────────────────────

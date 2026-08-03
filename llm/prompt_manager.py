@@ -417,11 +417,37 @@ def build_outline_prompt() -> str:
     )
 
 
+def _sources_citation_section(sources: str) -> str:
+    """Build a prompt section asking the LLM to cite *sources* inline.
+
+    *sources* is a numbered Markdown list (from
+    ``chapter_generator.build_sources_block``); the same numbering is
+    rendered into the chapter's ``{{sources}}`` section, so inline
+    ``[n]`` citations stay consistent with the final reference list.
+    Returns an empty string when no sources are provided.
+    """
+    if not sources.strip():
+        return ""
+    return (
+        "## SOURCES TO CITE\n\n"
+        "The information in this chapter comes from the following numbered "
+        "sources. Cite them inline in the text as [1], [2], ... whenever "
+        "you present a definition, theorem, example, or fact taken from "
+        "them (place the citation right after the relevant sentence). "
+        "The chapter's reference list is generated automatically from "
+        "these same sources — do NOT add your own references section at "
+        "the end of the content, and do NOT invent sources beyond the "
+        "ones listed below.\n\n"
+        f"{sources}\n\n"
+    )
+
+
 def build_chapter_prompt(
     topic: Topic,
     chunks: list[Chunk],
     depth_level: int,
     outline_chapter: OutlineChapter | None = None,
+    sources: str = "",
 ) -> str:
     """Build a prompt to generate the Markdown content for a single chapter.
 
@@ -438,6 +464,9 @@ def build_chapter_prompt(
         When provided, the LLM must use the given title and section
         structure exactly.  This ensures the generated chapter matches
         the pre-planned outline.
+    sources:
+        Numbered Markdown source list (one per line).  When non-empty,
+        the model is told to cite these sources inline as ``[n]``.
 
     Returns
     -------
@@ -576,6 +605,7 @@ def build_chapter_prompt(
         f"{depth_text}\n\n"
         f"{depth_template}"
         f"{_LECTURE_FORMATTING}"
+        f"{_sources_citation_section(sources)}"
         f"The chapter length must scale naturally with the number and size "
         f"of the source chunks — more material means a longer chapter. "
         f"Do NOT impose a fixed word count. A typical chapter at depth 5+ "
@@ -608,6 +638,7 @@ def build_focus_topic_prompt(
     focus_topic: str,
     chunks: list[Chunk],
     depth_level: int,
+    sources: str = "",
 ) -> str:
     """Build a prompt for ``scope="topic"`` mode.
 
@@ -625,6 +656,9 @@ def build_focus_topic_prompt(
         Pre-filtered chunks relevant to *focus_topic*.
     depth_level:
         Detail level 1-10 (typically ``generation.focus_depth_level``).
+    sources:
+        Numbered Markdown source list.  When non-empty, the model is
+        told to cite these sources inline as ``[n]``.
 
     Returns
     -------
@@ -704,6 +738,7 @@ def build_focus_topic_prompt(
         f"{depth_text}\n\n"
         f"{focus_depth_template}"
         f"{_LECTURE_FORMATTING}"
+        f"{_sources_citation_section(sources)}"
         f"IMPORTANT: Concentrate ONLY on the focus topic above. The "
         f"source chunks may contain mentions of other, unrelated topics — "
         f"you must IGNORE those entirely. Every paragraph must be directly "

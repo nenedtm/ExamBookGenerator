@@ -29,7 +29,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from core.models import Chunk, ExtractedImage, IndexEntry, OutlineChapter, Topic
+from core.models import Chunk, Document, ExtractedImage, IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaClient, OllamaError
 from llm.prompt_manager import (
     build_chapter_prompt,
@@ -399,6 +399,39 @@ def _find_insertion_index(lines: list[str], placement: str) -> int:
     return len(lines)
 
 
+# ── Source references ────────────────────────────────────────────────────────
+
+
+def build_sources_block(
+    chunks: list[Chunk],
+    documents: list[Document] | None = None,
+) -> str:
+    """Build a numbered Markdown reference list for *chunks*.
+
+    Each distinct ``Document`` backing *chunks* becomes one entry in the
+    order it first appears: ``1. *Title* — path``.  Syllabus documents
+    are excluded.  Returns an empty string when no documents match.
+    """
+    if not chunks or not documents:
+        return ""
+
+    doc_map = {d.id: d for d in documents}
+    seen: set[str] = set()
+    refs: list[str] = []
+    for c in chunks:
+        doc = doc_map.get(c.document_id)
+        if doc is None or doc.is_syllabus or doc.id in seen:
+            continue
+        seen.add(doc.id)
+        title = (doc.title or Path(doc.source_path).name).strip()
+        path = doc.source_path or ""
+        refs.append(f"{title} — `{path}`" if path else f"{title}")
+
+    if not refs:
+        return ""
+    return "\n".join(f"{i + 1}. {ref}" for i, ref in enumerate(refs))
+
+
 # ── Main public function ─────────────────────────────────────────────────────
 
 
@@ -414,6 +447,7 @@ def generate_chapter(
     scope: str = "full",
     client: OllamaClient | None = None,
     cfg: ConfigManager | None = None,
+    documents: list[Document] | None = None,
 ) -> tuple[str, str, list[str]]:
     """Generate a single chapter Markdown file.
 
@@ -444,6 +478,11 @@ def generate_chapter(
         Ollama client instance.  When *None*, a default one is created.
     cfg:
         Optional ``ConfigManager``.
+    documents:
+        All parsed ``Document`` objects available in this run.  Used to
+        build the chapter's source-reference list (``{{sources}}``) from
+        the ``Document`` objects backing *chunks*, and to let the LLM
+        cite those sources inline.
 
     Returns
     -------
@@ -487,6 +526,7 @@ def generate_chapter(
             content=content,
             index_entries=chapter_entries,
             images=[],
+            sources=build_sources_block(chunks, documents),
             include_toc=True,
         )
         logger.info(
@@ -496,12 +536,16 @@ def generate_chapter(
         return chapter_md, title, []
 
     # ── Build prompt ───────────────────────────────────────────────────
+    sources_block = build_sources_block(chunks, documents)
     if scope == "topic":
-        prompt = build_focus_topic_prompt(topic.name, chunks, depth_level)
+        prompt = build_focus_topic_prompt(
+            topic.name, chunks, depth_level, sources=sources_block,
+        )
     else:
         prompt = build_chapter_prompt(
             topic, chunks, depth_level,
             outline_chapter=outline_chapter,
+            sources=sources_block,
         )
 
     # ── Query LLM ─────────────────────────────────────────────────────
@@ -631,6 +675,7 @@ def generate_chapter(
         content=content,
         index_entries=index_entries,
         images=image_dicts,
+        sources=sources_block,
         include_toc=True,
     )
 

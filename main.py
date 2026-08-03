@@ -864,6 +864,7 @@ def run_pipeline(
                 depth_level=effective_depth,
                 candidate_images=topic_images,
                 scope=scope, client=client, cfg=cfg,
+                documents=documents,
             )
             chapters_md.append(chapter_md)
     else:
@@ -945,6 +946,7 @@ def run_pipeline(
                 index_entries=chapter_entries,
                 outline_chapter=outline_ch,
                 scope="full", client=client, cfg=cfg,
+                documents=documents,
             )
             chapters_md.append(chapter_md)
 
@@ -968,6 +970,7 @@ def run_pipeline(
                     depth_level=effective_depth,
                     candidate_images=topic_images if not args.no_images else [],
                     scope=scope, client=client, cfg=cfg,
+                    documents=documents,
                 )
                 chapters_md.append(chapter_md)
 
@@ -1233,6 +1236,7 @@ def run_outline_phase(
     return {
         "topics": topics,
         "all_chunks": all_chunks,
+        "documents": documents,
         "extracted_images": extracted_images,
         "outline_chapters": outline_chapters,
         "index_entries": index_entries,
@@ -1278,6 +1282,7 @@ def run_chapters_phase(
 
     topics = state["topics"]
     all_chunks = state["all_chunks"]
+    documents = state["documents"]
     extracted_images = state["extracted_images"]
     outline_chapters = state["outline_chapters"]
     index_entries = state["index_entries"]
@@ -1309,6 +1314,7 @@ def run_chapters_phase(
                 depth_level=effective_depth,
                 candidate_images=topic_images,
                 scope=scope, client=client, cfg=cfg,
+                documents=documents,
             )
             chapters_md.append(chapter_md)
     else:
@@ -1374,6 +1380,7 @@ def run_chapters_phase(
                 index_entries=chapter_entries,
                 outline_chapter=outline_ch,
                 scope="full", client=client, cfg=cfg,
+                documents=documents,
             )
             chapters_md.append(chapter_md)
             _save_chapter_file(chapters_dir, ch_idx, outline_ch.title, chapter_md)
@@ -1390,6 +1397,7 @@ def run_chapters_phase(
                     depth_level=effective_depth,
                     candidate_images=topic_images if not args.no_images else [],
                     scope=scope, client=client, cfg=cfg,
+                    documents=documents,
                 )
                 chapters_md.append(chapter_md)
 

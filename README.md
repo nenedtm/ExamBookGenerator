@@ -42,6 +42,7 @@ Point it at a folder (with any level of nesting) containing PDF books, lecture n
 - **Configurable detail level** (1–10) — from a minimal summary to an exhaustive reference
 - **Automatic syllabus detection** — finds your `programma` file and orders chapters to match your course
 - **Vision-powered image matching** — uses a local vision model to pick the most relevant images and place them in context
+- **Per-chapter source citations** — every chapter ends with a `References & Resources` section listing the source documents it was built from, and the LLM is prompted to cite them inline as `[1]`, `[2]`, …
 - **Always English output** — regardless of the source material language
 
 **Output structure:**
