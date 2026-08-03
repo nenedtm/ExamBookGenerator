@@ -489,6 +489,12 @@ def build_chapter_prompt(
             f"do NOT rename them, do NOT omit any.  Each section must "
             f"contain substantive prose (minimum 3-4 paragraphs per "
             f"section).\n\n"
+            f"IMPORTANT: the title and section headings below are taken "
+            f"from the official exam syllabus and MUST be reproduced "
+            f"VERBATIM, exactly as written, in the language they are "
+            f"given.  Even though the body prose is written in English, "
+            f"do NOT translate the headings into English and do NOT "
+            f"paraphrase them.\n\n"
             f"**Chapter title:** {outline_chapter.title}\n\n"
             f"**Sections (in order):**\n{section_list}\n\n"
         )

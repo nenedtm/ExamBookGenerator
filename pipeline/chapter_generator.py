@@ -241,41 +241,72 @@ def _align_outline_headings(
 
     The first heading is rewritten to *title*; every later heading whose
     text overlaps an outline section is renamed to the exact section title
-    (greedy best match, requires a word-overlap score >= 0.5).  Headings
-    that match nothing are left untouched so no body text is ever lost.
+    (greedy best match, requires a word-overlap score >= 0.5).
+
+    When the model translated the headings — e.g. English headings for
+    Italian syllabus sections — the fuzzy pass finds no overlap.  In that
+    case a positional fallback assigns the remaining headings to the
+    remaining sections in order, but only when the two counts match, so no
+    heading is ever mislabelled or truncated.  Headings that match nothing
+    are left untouched so no body text is ever lost.
     """
     lines = content.split("\n")
+
+    # Locate every heading; rewrite the first one to the outline title.
+    heading_lines: list[tuple[int, str, str]] = []  # (line_idx, prefix, text)
     first_idx = -1
     for i, line in enumerate(lines):
         m = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
-        if m:
+        if not m:
+            continue
+        if first_idx < 0:
             lines[i] = f"{m.group(1)} {title}"
             first_idx = i
-            break
+        else:
+            heading_lines.append((i, m.group(1), m.group(2).strip()))
     if first_idx < 0:
         return content
 
+    # Pass 1: greedy fuzzy matching (language-agnostic only via shared words).
     assigned: set[int] = set()
-    remaining = list(enumerate(sections))
-    for i, line in enumerate(lines):
-        if i == first_idx:
-            continue
-        m = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
-        if not m:
-            continue
-        heading_text = m.group(2).strip()
+    for i, prefix, heading_text in heading_lines:
         best_idx = -1
         best_score = 0.0
-        for s_idx, _sec in remaining:
+        for s_idx, sec in enumerate(sections):
             if s_idx in assigned:
                 continue
-            score = _heading_word_overlap(heading_text, sections[s_idx])
+            score = _heading_word_overlap(heading_text, sec)
             if score > best_score:
                 best_score = score
                 best_idx = s_idx
         if best_idx >= 0 and best_score >= 0.5:
-            lines[i] = f"{m.group(1)} {sections[best_idx]}"
+            lines[i] = f"{prefix} {sections[best_idx]}"
             assigned.add(best_idx)
+
+    # Pass 2: positional fallback for cross-language headings.  Only fires
+    # when the number of unmatched headings equals the number of unmatched
+    # sections (a 1:1 permutation, renamed in order) AND at least one pair
+    # shares a content token — e.g. proper nouns like "Polya" or "de Finetti"
+    # that survive translation.  This prevents unrelated headings (zero
+    # shared vocabulary) from being relabelled.
+    unassigned_headings = [
+        (i, prefix, text) for (i, prefix, text) in heading_lines if i not in assigned
+    ]
+    unassigned_sections = [
+        s_idx for s_idx in range(len(sections)) if s_idx not in assigned
+    ]
+    pairs_match = len(unassigned_headings) == len(unassigned_sections)
+    if pairs_match and unassigned_sections:
+        shared_token = any(
+            _heading_word_overlap(text, sections[s_idx]) > 0.0
+            for (i, prefix, text) in unassigned_headings
+            for s_idx in unassigned_sections
+        )
+        if shared_token:
+            for (line_idx, prefix, _text), sec_idx in zip(
+                unassigned_headings, unassigned_sections
+            ):
+                lines[line_idx] = f"{prefix} {sections[sec_idx]}"
 
     return "\n".join(lines)
 
@@ -570,8 +601,16 @@ def generate_chapter(
                     "The content field contained only headings without "
                     "body paragraphs."
                 )
-            # Verify the chapter follows the planned outline structure
+            # Verify the chapter follows the planned outline structure.
+            # Align headings to the outline first so the structural check
+            # is language-agnostic: if the model translated the syllabus
+            # headings (English body vs Italian outline), the positional
+            # fallback in ``_align_outline_headings`` restores them.
             if outline_chapter is not None:
+                content_str = _align_outline_headings(
+                    content_str, outline_chapter.title, outline_chapter.sections,
+                )
+                candidate["content"] = content_str
                 missing = _missing_outline_sections(
                     content_str, outline_chapter.sections,
                 )
@@ -602,7 +641,11 @@ def generate_chapter(
                 "or sections with only headings.\n"
                 "When a REQUIRED chapter structure is given, you MUST use "
                 "EXACTLY those chapter title and section headings — do NOT "
-                "rename or omit them.\n"
+                "rename or omit them. The headings come from the official "
+                "exam syllabus and must be reproduced VERBATIM in the "
+                "language they are written (they may be Italian); do NOT "
+                "translate them into English, even though the body prose "
+                "is in English.\n"
                 "Re-output the COMPLETE corrected JSON with full content."
             )
             prompt_with_feedback = prompt + feedback

@@ -244,6 +244,43 @@ class TestAlignOutlineHeadings:
         assert "## Real Title" in aligned
         assert "### The Mathematics of Random Cube Solving" in aligned
 
+    def test_translated_headings_aligned_positionally(self) -> None:
+        content = (
+            "## Exchangeable Processes\n\nIntro.\n\n"
+            "### Definition of stochastic process\n\nText.\n\n"
+            "### Three examples of exchangeable processes\n\nText.\n\n"
+            "### Simulation of Polya's random walk\n\nText.\n\n"
+            "### Notes on Bayesian networks\n\nText."
+        )
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            [
+                "Definizione di processo stocastico",
+                "Tre esempi di processi scambiabili",
+                "Simulazione della passeggiata aleatoria di Polya",
+                "Cenni sulle reti Bayesiane",
+            ],
+        )
+        assert "## Processi scambiabili" in aligned
+        assert "### Definizione di processo stocastico" in aligned
+        assert "### Tre esempi di processi scambiabili" in aligned
+        assert "### Simulazione della passeggiata aleatoria di Polya" in aligned
+        assert "### Cenni sulle reti Bayesiane" in aligned
+
+    def test_missing_sections_not_positionally_filled(self) -> None:
+        content = "## T\n\nIntro.\n\n### Definition of stochastic process\n\nText."
+        aligned = _align_outline_headings(
+            content,
+            "Real Title",
+            [
+                "Definizione di processo stocastico",
+                "Tre esempi di processi scambiabili",
+            ],
+        )
+        assert "## Real Title" in aligned
+        assert "### Definition of stochastic process" in aligned
+
     def test_no_headings_returns_unchanged(self) -> None:
         content = "Just prose with no headings at all."
         assert _align_outline_headings(content, "Title", ["Section"]) == content
