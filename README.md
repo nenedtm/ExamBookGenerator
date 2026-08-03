@@ -165,6 +165,15 @@ python main.py --input ./StudyMaterial --template my_template.md
 python main.py --input ./StudyMaterial --output ./my_output/
 ```
 
+> **Templates:** the default `template-lecture.md` wraps every chapter in a
+> readable lecture structure — a 🟡 `[!recap]` recap callout with a local
+> index, a `📝 Notes` section, and `🔗 References & Resources`. Chapter
+> content is generated with Obsidian callouts (`[!formula]`, `[!theorem]`,
+> `[!proof]`, `[!exercise]`, `[!question]`, `[!review]`) for maximum
+> readability. Use the classic `template.md` for a plain book layout, or any
+> custom template with the `{{title}}`, `{{toc}}`, `{{content}}`,
+> `{{sources}}` and `{{images}}` placeholders.
+
 ### GUI
 
 ```bash
@@ -186,7 +195,7 @@ Opens `http://localhost:8501` with a visual interface — no desktop app needed.
 | Flag | Description | Default |
 |---|---|---|
 | `--input DIR` | Source material directory. If omitted, the GUI launches. | — |
-| `--template FILE` | Markdown template file | `template.md` |
+| `--template FILE` | Markdown template file (lecture-style by default) | `template-lecture.md` |
 | `--model NAME` | Override the LLM model from config | config value |
 | `--output DIR` | Output directory | `output/` |
 | `--depth N` | Detail level 1–10 | config value (5) |
@@ -456,7 +465,8 @@ ExamBookGenerator/
 ├── streamlit_app.py        # Streamlit web demo
 ├── config.yaml             # default configuration
 ├── config.example.yaml     # documented example configuration
-├── template.md             # chapter template
+├── template.md             # classic chapter template
+├── template-lecture.md     # lecture-style chapter template (default)
 ├── requirements.txt        # Python dependencies
 ├── install.sh              # one-command installation script
 │

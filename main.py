@@ -103,8 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
              "If omitted, the GUI is launched.",
     )
     parser.add_argument(
-        "--template", default="template.md",
-        help="Path to the Markdown template file (default: template.md).",
+        "--template", default="template-lecture.md",
+        help="Path to the Markdown template file (default: template-lecture.md).",
     )
     parser.add_argument(
         "--model",

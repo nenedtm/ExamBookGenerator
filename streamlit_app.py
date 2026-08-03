@@ -109,7 +109,7 @@ with st.sidebar:
     )
 
     # Template
-    template_path = st.text_input("Template file", value="template.md")
+    template_path = st.text_input("Template file", value="template-lecture.md")
 
     # Model
     model_options = _OLLAMA_MODELS + ["(custom)"]

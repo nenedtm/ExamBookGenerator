@@ -11,10 +11,12 @@ Supported variables
 ``{{toc}}``
     **Programmatically** built from ``list[IndexEntry]`` — never generated
     by the LLM.  Rendered as a Markdown list with ``- [Title](#anchor)``
-    syntax, indented one level for sub-sections (``level >= 2``).  When
-    ``include_toc`` is *False*, the placeholder is replaced with an empty
-    string (and any trailing blank line produced by the template is
-    collapsed).
+    syntax, indented one level for sub-sections (``level >= 2``).  When the
+    placeholder sits inside a blockquote line (e.g. ``> {{toc}}`` inside an
+    Obsidian callout), every rendered line keeps the ``>`` prefix so the
+    whole index stays inside the callout.  When ``include_toc`` is *False*,
+    the placeholder is replaced with an empty string (and any trailing blank
+    line produced by the template is collapsed).
 
 ``{{content}}``
     The LLM-generated Markdown body.
@@ -155,6 +157,25 @@ def render_images(images: list[dict[str, str]]) -> str:
 # ── Template rendering ───────────────────────────────────────────────────────
 
 
+def _render_toc_placeholder(template: str, toc_block: str) -> str:
+    """Replace the ``{{toc}}`` placeholder in *template* with *toc_block*.
+
+    When the placeholder line starts with a Markdown blockquote marker
+    (``> {{toc}}`` — typical inside an Obsidian callout), every rendered
+    TOC line is prefixed with the same marker so the index stays inside
+    the blockquote.  If *toc_block* is empty, the whole placeholder line
+    (including its blockquote marker) is removed.
+    """
+    match = re.search(r"^(\s*>+\s*)\{\{toc\}\}\s*$", template, re.MULTILINE)
+    if match:
+        if not toc_block:
+            return template.replace(match.group(0), "")
+        prefix = match.group(1)
+        indented = "\n".join(prefix + line for line in toc_block.split("\n"))
+        return template.replace(match.group(0), indented)
+    return template.replace("{{toc}}", toc_block)
+
+
 def apply_template(
     template: str,
     *,
@@ -178,7 +199,9 @@ def apply_template(
     index_entries:
         Entries used to build ``{{toc}}``.  When *None* or empty and
         *include_toc* is *True*, the ``{{toc}}`` placeholder is
-        replaced with an empty string.
+        replaced with an empty string.  When the placeholder line in
+        the template carries a blockquote prefix (``> {{toc}}``), the
+        rendered list is kept inside the blockquote.
     sources:
         Value for ``{{sources}}``.
     images:
@@ -224,7 +247,7 @@ def apply_template(
     out = out.replace("{{images}}", images_block)
     out = out.replace("{{sources}}", sources_block)
     out = out.replace("{{content}}", content)
-    out = out.replace("{{toc}}", toc_block)
+    out = _render_toc_placeholder(out, toc_block)
     out = out.replace("{{title}}", title)
 
     # ── Post-processing ───────────────────────────────────────────────────

@@ -201,6 +201,32 @@ class TestApplyTemplateToc:
         content_pos = out.index("Body")
         assert title_pos < toc_pos < content_pos
 
+    def test_toc_inside_blockquote_is_prefixed(self) -> None:
+        tpl = "# {{title}}\n\n> [!recap] Recap\n>\n> {{toc}}\n\n{{content}}"
+        out = apply_template(
+            tpl,
+            title="T",
+            content="Body",
+            index_entries=_entries(),
+            include_toc=True,
+        )
+        assert "> - [Linear Algebra](#linear-algebra)" in out
+        assert ">   - [Vector Spaces](#vector-spaces)" in out
+        # Nothing outside the blockquote
+        assert "\n- [Linear Algebra]" not in out
+
+    def test_empty_toc_inside_blockquote_removes_placeholder_line(self) -> None:
+        tpl = "# {{title}}\n\n> [!recap] Recap\n>\n> {{toc}}\n\n{{content}}"
+        out = apply_template(
+            tpl,
+            title="T",
+            content="Body",
+            index_entries=[],
+            include_toc=True,
+        )
+        assert "{{toc}}" not in out
+        assert "> - [" not in out
+
 
 # ── apply_template — images ──────────────────────────────────────────────────
 
@@ -326,3 +352,23 @@ class TestIntegration:
         toc_idx = out.index("- [Algebra]")
         heading_idx = out.index("## Algebra")
         assert title_idx < toc_idx < heading_idx
+
+    def test_full_render_lecture_template(self) -> None:
+        tpl = load_template(Path("template-lecture.md"))
+        out = apply_template(
+            tpl,
+            title="Linear Algebra",
+            content="## Linear Algebra\n\nText about LA.",
+            index_entries=_entries(),
+            sources="1. Notes",
+            include_toc=True,
+        )
+        assert "# Linear Algebra" in out
+        # Lecture structure present
+        assert "> [!recap] 🟡 Lecture Recap" in out
+        assert "## 📝 Notes" in out
+        assert "## 🔗 References & Resources" in out
+        assert "1. Notes" in out
+        # TOC rendered inside the recap callout
+        assert "> - [Linear Algebra](#linear-algebra)" in out
+        assert ">   - [Vector Spaces](#vector-spaces)" in out

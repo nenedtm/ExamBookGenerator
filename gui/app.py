@@ -139,7 +139,7 @@ class ExamBookWindow(QMainWindow):
         form.addRow("Source material:", row)
 
         # Template
-        self._template_edit = QLineEdit("template.md")
+        self._template_edit = QLineEdit("template-lecture.md")
         template_btn = QPushButton("Browse…")
         template_btn.clicked.connect(self._browse_template)
         trow = QHBoxLayout()
@@ -350,7 +350,7 @@ class ExamBookWindow(QMainWindow):
         scope = "full" if self._radio_full.isChecked() else "topic"
         return Namespace(
             input=self._folder_edit.text().strip() or None,
-            template=self._template_edit.text().strip() or "template.md",
+            template=self._template_edit.text().strip() or "template-lecture.md",
             model=self._model_combo.currentText().strip() or None,
             output=None,
             depth=self._depth_slider.value(),
@@ -375,7 +375,7 @@ class ExamBookWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid folder", f"Not a directory: {folder}")
             return
 
-        template = self._template_edit.text().strip() or "template.md"
+        template = self._template_edit.text().strip() or "template-lecture.md"
         if not Path(template).is_file():
             QMessageBox.warning(self, "Template not found", f"Template not found: {template}")
             return
