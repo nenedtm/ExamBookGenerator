@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from core.models import Chunk, Document, ExtractedImage, IndexEntry, OutlineChapter, Topic
@@ -180,7 +181,10 @@ def _normalize(text: str) -> str:
     """Return a lowercase alphanumeric key for fuzzy heading comparison."""
     nfkd = unicodedata.normalize("NFKD", text)
     ascii_text = nfkd.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]+", "", ascii_text.lower())
+    key = re.sub(r"[^a-z0-9]+", "", ascii_text.lower())
+    # Strip leading numbering the model may copy from the numbered outline
+    # list ("1. Definizione di ..." -> "definizionedi...").
+    return re.sub(r"^\d+", "", key)
 
 
 def _heading_texts(content: str) -> list[str]:
@@ -232,6 +236,49 @@ def _heading_word_overlap(a: str, b: str) -> float:
     return len(wa & wb) / max(len(wa), len(wb))
 
 
+def _heading_char_similarity(a: str, b: str) -> float:
+    """Char-similarity ratio between two heading texts (0..1).
+
+    Used on top of ``_heading_word_overlap`` because English/Italian
+    cognates (``definition`` / ``definizione``, ``Bayesian`` /
+    ``Bayesiane``) share no exact tokens but are still the same section.
+    """
+    ka = _normalize(a)
+    kb = _normalize(b)
+    if not ka or not kb:
+        return 0.0
+    return SequenceMatcher(None, ka, kb).ratio()
+
+
+_DECORATIVE_HEADING_TOKENS: frozenset[str] = frozenset({
+    "notes", "note", "references", "reference", "resources", "resource",
+    "bibliography", "sources", "source", "conclusione", "conclusion",
+    "riepilogo", "summary", "recap", "takeaways", "keytakeaways",
+    "appendix", "appendice", "tableofcontents", "indice", "toc",
+})
+
+
+def _is_decorative_heading(text: str) -> bool:
+    """Whether *text* looks like a decorative (non-outline) heading.
+
+    The model sometimes adds template-style sections such as
+    ``📝 Notes``, ``🔗 References & Resources`` or ``Conclusione e
+    riepilogo``.  These are not part of the outline and must not be
+    counted when positionally aligning translated section headings.
+
+    A heading is decorative only when *every* significant word in it is a
+    decorative token — so ``Notes on Bayesian networks`` (a translated
+    section) is NOT decorative, while ``📝 Notes`` and ``Conclusione e
+    riepilogo`` are.
+    """
+    if any(ch in text for ch in ("📝", "🔗", "📚", "🟡", "📌", "ℹ")):
+        return True
+    words = set(re.findall(r"[a-z]{3,}", text.lower()))
+    if not words:
+        return True
+    return all(w in _DECORATIVE_HEADING_TOKENS for w in words)
+
+
 def _align_outline_headings(
     content: str,
     title: str,
@@ -246,11 +293,15 @@ def _align_outline_headings(
     When the model translated the headings — e.g. English headings for
     Italian syllabus sections — the fuzzy pass finds no overlap.  In that
     case a positional fallback assigns the remaining headings to the
-    remaining sections in order, but only when the two counts match, so no
-    heading is ever mislabelled or truncated.  Headings that match nothing
-    are left untouched so no body text is ever lost.
+    remaining sections in order, provided the counts match after dropping
+    decorative headings (``Notes``, ``References``, …) and duplicate title
+    headings, and there is evidence the headings are translations of the
+    missing sections (a shared content token or a translation-like char
+    similarity).  Headings that match nothing are left untouched so no
+    body text is ever lost.
     """
     lines = content.split("\n")
+    title_key = _normalize(title)
 
     # Locate every heading; rewrite the first one to the outline title.
     heading_lines: list[tuple[int, str, str]] = []  # (line_idx, prefix, text)
@@ -262,8 +313,12 @@ def _align_outline_headings(
         if first_idx < 0:
             lines[i] = f"{m.group(1)} {title}"
             first_idx = i
-        else:
-            heading_lines.append((i, m.group(1), m.group(2).strip()))
+            continue
+        text = m.group(2).strip()
+        # Ignore a duplicated chapter title heading (not a section).
+        if title_key and _normalize(text) == title_key:
+            continue
+        heading_lines.append((i, m.group(1), text))
     if first_idx < 0:
         return content
 
@@ -284,25 +339,28 @@ def _align_outline_headings(
             assigned.add(best_idx)
 
     # Pass 2: positional fallback for cross-language headings.  Only fires
-    # when the number of unmatched headings equals the number of unmatched
-    # sections (a 1:1 permutation, renamed in order) AND at least one pair
-    # shares a content token — e.g. proper nouns like "Polya" or "de Finetti"
-    # that survive translation.  This prevents unrelated headings (zero
-    # shared vocabulary) from being relabelled.
+    # when the number of remaining (non-decorative) headings equals the
+    # number of remaining sections (a 1:1 permutation, renamed in order)
+    # AND there is evidence the headings are translations of those sections
+    # — a shared content token (e.g. "Polya", "de Finetti") or a char
+    # similarity >= 0.40.  This prevents unrelated headings (zero shared
+    # vocabulary) from being relabelled.
     unassigned_headings = [
-        (i, prefix, text) for (i, prefix, text) in heading_lines if i not in assigned
+        (i, prefix, text)
+        for (i, prefix, text) in heading_lines
+        if i not in assigned and not _is_decorative_heading(text)
     ]
     unassigned_sections = [
         s_idx for s_idx in range(len(sections)) if s_idx not in assigned
     ]
-    pairs_match = len(unassigned_headings) == len(unassigned_sections)
-    if pairs_match and unassigned_sections:
-        shared_token = any(
+    if len(unassigned_headings) == len(unassigned_sections) and unassigned_sections:
+        evidence = any(
             _heading_word_overlap(text, sections[s_idx]) > 0.0
+            or _heading_char_similarity(text, sections[s_idx]) >= 0.40
             for (i, prefix, text) in unassigned_headings
             for s_idx in unassigned_sections
         )
-        if shared_token:
+        if evidence:
             for (line_idx, prefix, _text), sec_idx in zip(
                 unassigned_headings, unassigned_sections
             ):

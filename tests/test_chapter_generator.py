@@ -281,6 +281,59 @@ class TestAlignOutlineHeadings:
         assert "## Real Title" in aligned
         assert "### Definition of stochastic process" in aligned
 
+    def test_decorative_headings_do_not_block_positional_alignment(self) -> None:
+        content = (
+            "## Processi scambiabili\n\nIntro.\n\n"
+            "## 📝 Notes\n\n"
+            "### Definition of stochastic process\n\nText.\n\n"
+            "### Simulation of Polya's random walk\n\nText.\n\n"
+            "### Conclusione e riepilogo\n\nText.\n\n"
+            "## 🔗 References & Resources\n\nList."
+        )
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            [
+                "Definizione di processo stocastico",
+                "Simulazione della passeggiata aleatoria di Polya",
+            ],
+        )
+        assert "### Definizione di processo stocastico" in aligned
+        assert "### Simulazione della passeggiata aleatoria di Polya" in aligned
+        assert "## 📝 Notes" in aligned
+        assert "### Conclusione e riepilogo" in aligned
+
+    def test_duplicate_title_heading_ignored(self) -> None:
+        content = (
+            "## Processi scambiabili\n\nIntro.\n\n"
+            "## Processi scambiabili\n\n"
+            "### Definition of stochastic process\n\nText."
+        )
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            ["Definizione di processo stocastico"],
+        )
+        assert "### Definizione di processo stocastico" in aligned
+
+    def test_translation_without_shared_tokens_aligned(self) -> None:
+        content = "## T\n\nIntro.\n\n### Notes on Bayesian networks\n\nText."
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            ["Cenni sulle reti Bayesiane"],
+        )
+        assert "### Cenni sulle reti Bayesiane" in aligned
+
+    def test_numbered_headings_aligned(self) -> None:
+        content = "## T\n\nIntro.\n\n### 1. Definizione di processo stocastico\n\nText."
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            ["Definizione di processo stocastico"],
+        )
+        assert "### Definizione di processo stocastico" in aligned
+
     def test_no_headings_returns_unchanged(self) -> None:
         content = "Just prose with no headings at all."
         assert _align_outline_headings(content, "Title", ["Section"]) == content

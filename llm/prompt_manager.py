@@ -494,7 +494,12 @@ def build_chapter_prompt(
             f"VERBATIM, exactly as written, in the language they are "
             f"given.  Even though the body prose is written in English, "
             f"do NOT translate the headings into English and do NOT "
-            f"paraphrase them.\n\n"
+            f"paraphrase them.\n"
+            f"Do NOT add any other headings besides the required ones — "
+            f"no separate \"Introduction\", \"Notes\", \"Conclusion\", "
+            f"\"Summary\", \"Recap\" or \"References\" sections.  The "
+            f"chapter must contain exactly the required structure "
+            f"below.\n\n"
             f"**Chapter title:** {outline_chapter.title}\n\n"
             f"**Sections (in order):**\n{section_list}\n\n"
         )
