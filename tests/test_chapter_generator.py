@@ -10,6 +10,7 @@ import pytest
 
 from core.models import Chunk, Document, ExtractedImage, IndexEntry, OutlineChapter, Topic
 from llm.ollama_client import OllamaError
+from llm.prompt_manager import _chunks_text, build_chapter_prompt
 from pipeline.chapter_generator import (
     ChapterGeneratorError,
     _align_outline_headings,
@@ -338,6 +339,60 @@ class TestAlignOutlineHeadings:
         content = "Just prose with no headings at all."
         assert _align_outline_headings(content, "Title", ["Section"]) == content
 
+    def test_extra_task_headings_do_not_block_translated_sections(self) -> None:
+        """Extra Task / Sum-up headings (from the depth 9-10 template) must
+        not prevent translated syllabus sections from being re-aligned."""
+        content = (
+            "## Processi scambiabili\n\nIntro.\n\n"
+            "### Definizione di processo stocastico\n\n"
+            "Text about the definition.\n\n"
+            "### Definition of the Polya urn process\n\n"
+            "Text about the Polya urn.\n\n"
+            "### de Finetti's representation theorem (finite form)\n\n"
+            "Text about de Finetti.\n\n"
+            "### Task 1 - Polya urn exercises\n\n"
+            "### Sum-up\n\n"
+            "Recap text.\n"
+        )
+        aligned = _align_outline_headings(
+            content,
+            "Processi scambiabili",
+            [
+                "Definizione di processo stocastico",
+                "Derivazione delle probabilità predittive per il processo di Polya",
+                "Teorema di rappresentazione di de Finetti (versione finita)",
+            ],
+        )
+        # Verbatim Italian heading matches in pass 1
+        assert "### Definizione di processo stocastico" in aligned
+        # Translated headings salvaged despite the extra Task/Sum-up headings
+        assert (
+            "### Derivazione delle probabilità predittive per il processo di Polya"
+            in aligned
+        )
+        assert (
+            "### Teorema di rappresentazione di de Finetti (versione finita)"
+            in aligned
+        )
+        # Extra headings are left untouched
+        assert "### Task 1 - Polya urn exercises" in aligned
+        assert "### Sum-up" in aligned
+
+    def test_fewer_headings_than_sections_not_salvaged(self) -> None:
+        """When there are fewer headings than required sections, a leftover
+        heading is never relabelled to fill the gap."""
+        content = "## T\n\nIntro.\n\n### Definition of stochastic process\n\nText."
+        aligned = _align_outline_headings(
+            content,
+            "Real Title",
+            [
+                "Definizione di processo stocastico",
+                "Tre esempi di processi scambiabili",
+            ],
+        )
+        assert "## Real Title" in aligned
+        assert "### Definition of stochastic process" in aligned
+
 
 # ── _build_chapter_index ─────────────────────────────────────────────────────
 
@@ -614,6 +669,60 @@ class TestGenerateChapterFull:
         assert "### Eigenvalues" in md
         assert "# Linear Algebra" in md
 
+    def test_passes_num_ctx_to_ollama(self) -> None:
+        """The chapter prompt is large; without an explicit num_ctx Ollama
+        truncates it.  The call must carry a window sized for prompt+output."""
+        client = _mock_client()
+        topic = _make_topic()
+        chunks = _make_chunks()
+
+        generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full", client=client,
+        )
+
+        kwargs = client.generate.call_args.kwargs
+        assert "num_ctx" in kwargs["options"]
+        assert kwargs["options"]["num_ctx"] >= 8192
+
+    def test_retry_feedback_includes_required_structure(self) -> None:
+        """On retry, the feedback must re-list the required section headings
+        verbatim so the model can reproduce them even if the base prompt was
+        truncated."""
+        bad = json.dumps({
+            "title": "X",
+            "content": (
+                "## X\n\nIntro.\n\n"
+                "### Vector Spaces\n\n"
+                "Paragraph one with real body text.\n\n"
+                "Paragraph two with real body text.\n\n"
+                "Paragraph three with real body text.\n"
+            ),
+            "sections": ["Vector Spaces"],
+        })
+        good = _llm_chapter_response()
+        client = _mock_client()
+        client.generate.side_effect = [bad, good]
+        topic = _make_topic()
+        chunks = _make_chunks()
+        outline = OutlineChapter(
+            title="Linear Algebra",
+            sections=["Vector Spaces", "Eigenvalues"],
+            topic_indices=[0],
+        )
+
+        generate_chapter(
+            topic, chunks, SIMPLE_TEMPLATE,
+            depth_level=5, scope="full",
+            outline_chapter=outline, client=client,
+        )
+
+        retry_prompt = client.generate.call_args_list[1].args[0]
+        assert "## REQUIRED CHAPTER STRUCTURE (reproduce VERBATIM)" in retry_prompt
+        assert "**Chapter title:** Linear Algebra" in retry_prompt
+        assert "1. Vector Spaces" in retry_prompt
+        assert "2. Eigenvalues" in retry_prompt
+
 
 # ── generate_chapter — topic (focus) mode ────────────────────────────────────
 
@@ -791,8 +900,50 @@ class TestGenerateChapterMissing:
         assert img_ids == []
 
 
-# ── Integration: full end-to-end ─────────────────────────────────────────────
+# ── Prompt construction ───────────────────────────────────────────────────────
 
+class TestChapterPromptConstruction:
+    def _outline(self) -> OutlineChapter:
+        return OutlineChapter(
+            title="Processi scambiabili",
+            sections=[
+                "Definizione di processo stocastico",
+                "Teorema di rappresentazione di de Finetti (versione finita)",
+                "Cenni sulle reti Bayesiane",
+            ],
+            topic_indices=[0],
+        )
+
+    def test_depth_9_template_skipped_when_outline_required(self) -> None:
+        """The depth 9-10 template demands Task/Sum-up ### headings, which
+        contradicts the REQUIRED CHAPTER STRUCTURE.  It must be replaced with
+        a syllabus-aligned variant when an outline chapter is provided."""
+        topic = _make_topic(name="Processi scambiabili")
+        chunks = _make_chunks()
+        prompt = build_chapter_prompt(
+            topic, chunks, depth_level=10, outline_chapter=self._outline(),
+        )
+        assert "REQUIRED CHAPTER STRUCTURE" in prompt
+        assert "### Task 1" not in prompt
+        assert "### Sum-up" not in prompt
+        assert "## CHAPTER TEMPLATE (depth 9-10, syllabus-aligned)" in prompt
+        assert "REQUIRED CHAPTER STRUCTURE above as the ONLY ## and" in prompt
+
+    def test_depth_9_template_kept_without_outline(self) -> None:
+        topic = _make_topic(name="Processi scambiabili")
+        chunks = _make_chunks()
+        prompt = build_chapter_prompt(topic, chunks, depth_level=10)
+        assert "### Task 1" in prompt
+        assert "### Sum-up" in prompt
+
+    def test_chunks_text_capped(self) -> None:
+        big = Chunk(document_id="doc-1", content="x" * 300_000, position=0)
+        text = _chunks_text([big], max_chars=150_000, depth_level=10)
+        assert len(text) < 140_000
+        assert "..." in text
+
+
+# ── Integration: full end-to-end ─────────────────────────────────────────────
 class TestIntegration:
     def test_full_mode_end_to_end(self, tmp_path: Path) -> None:
         client = _mock_client()

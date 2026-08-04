@@ -32,6 +32,8 @@ _DEFAULTS: dict[str, Any] = {
         "model": "qwen3",
         "timeout": 120,
         "max_retries": 3,
+        "num_ctx_min": 8192,
+        "num_ctx_max": 131072,
     },
     "structure": {
         "include_toc": True,

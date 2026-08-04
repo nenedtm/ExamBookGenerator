@@ -7,6 +7,8 @@ llm:
   model: "qwen3:latest"
   timeout: 7200
   max_retries: 2
+  num_ctx_min: 8192
+  num_ctx_max: 131072
 
 structure:
   include_toc: true

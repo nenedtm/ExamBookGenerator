@@ -23,6 +23,11 @@ logger = get_logger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+# Hard cap on how much source material is serialized into any prompt (~32k
+# tokens).  Keeps the prompt within the model's context window so Ollama
+# does not truncate it and drop later instructions.
+_MAX_CHUNKS_CHARS = 131_072
+
 _ALWAYS_ENGLISH = (
     "Always write the output in English, regardless of the language of "
     "the source material."
@@ -220,9 +225,16 @@ def _chunks_text(
     The *max_chars* limit scales with *depth_level*: at depth 1 the cap
     is the base ``max_chars``; at depth 10 it is 4× that value, so the
     LLM receives more source material for higher detail levels.
+
+    The limit is hard-capped at ``_MAX_CHUNKS_CHARS`` (~32k tokens) so the
+    serialized prompt always fits inside a sane context window.  Without a
+    cap, high depth levels produce prompts that silently exceed the model's
+    ``num_ctx`` and get truncated by Ollama — which drops the REQUIRED
+    CHAPTER STRUCTURE instructions and yields chapters with missing or
+    wrong section headings.
     """
     depth_factor = 1.0 + (max(1, min(10, depth_level)) - 1) * 0.33
-    effective_limit = int(max_chars * depth_factor)
+    effective_limit = min(int(max_chars * depth_factor), _MAX_CHUNKS_CHARS)
     parts: list[str] = []
     total = 0
     for idx, c in enumerate(chunks, 1):
@@ -507,56 +519,76 @@ def build_chapter_prompt(
     # ── Depth-specific structure template ────────────────────────────────
     depth_template = ""
     if depth_level >= 9:
-        depth_template = (
-            "## CHAPTER TEMPLATE (depth 9-10)\n\n"
-            "Follow this EXACT structural template for the chapter:\n\n"
-            "```\n"
-            "## [Chapter Title]\n\n"
-            "[Brief introduction: 2-3 paragraphs motivating the topic, "
-            "explaining its importance, and outlining the chapter structure.]\n\n"
-            "### [Subtopic 1 - Detailed Exposition]\n"
-            "[4-6 paragraphs of rigorous explanation with definitions, "
-            "derivations, examples.]\n"
-            "[Use **Key Word:** markers for definitions.]\n"
-            "[Use > [!exercise] callouts for illustrations.]\n"
-            "[Use > [!review] callouts for caveats.]\n\n"
-            "### [Subtopic 2 - Detailed Exposition]\n"
-            "[Continue for each major subtopic...]\n\n"
-            "[If comparing concepts, use a markdown table:]\n"
-            "| Feature | Concept A | Concept B |\n"
-            "| --- | --- | --- |\n"
-            "| ... | ... | ... |\n\n"
-            "### [Comparative Analysis]\n"
-            "[Task N - Topic: side-by-side comparison.]\n\n"
-            "---\n\n"
-            "### Task 1 - [Subtopic Group A]\n\n"
-            "#### Q1.1 [Exam question]\n"
-            "[Detailed, comprehensive answer in 3-5 paragraphs.]\n\n"
-            "#### Q1.2 [Exam question]\n"
-            "[Detailed answer...]\n\n"
-            "[Continue with Q1.3, Q1.4, ...]\n\n"
-            "### Task 2 - [Subtopic Group B]\n\n"
-            "#### Q2.1 [Exam question]\n"
-            "[Detailed answer...]\n\n"
-            "[Continue with more Tasks as needed...]\n\n"
-            "### Task N - [Comparative Task]\n"
-            "[Questions comparing and contrasting concepts from different "
-            "parts of the chapter.]\n\n"
-            "---\n\n"
-            "### Sum-up\n\n"
-            "#### [Subtopic 1 Name]\n"
-            "- [Complete, self-contained bullet-point fact]\n"
-            "- [Complete, self-contained bullet-point fact]\n"
-            "- [Continue...]\n\n"
-            "#### [Subtopic 2 Name]\n"
-            "- [Complete, self-contained bullet-point fact]\n"
-            "- [Continue...]\n\n"
-            "[If applicable, end with a comparison table summarizing key "
-            "differences.]\n"
-            "```\n\n"
-            "The Tasks and Q&A section should contain 30-40% of the total "
-            "chapter content. The Sum-up should be 10% of the total. "
-            "The remaining 50-60% is detailed exposition.\n\n"
+        if outline_chapter is not None:
+            # When a syllabus-derived chapter structure is required, the
+            # generic depth-9/10 skeleton (Task N / Sum-up / Q1.x headings)
+            # would CONTRADICT the REQUIRED CHAPTER STRUCTURE section above
+            # ("do NOT add any other headings").  The rich depth-9/10
+            # content requirements are kept, but folded inside the required
+            # sections as sub-headings / callouts instead of new ### headings.
+            depth_template = (
+                "## CHAPTER TEMPLATE (depth 9-10, syllabus-aligned)\n\n"
+                "Use the REQUIRED CHAPTER STRUCTURE above as the ONLY ## and "
+                "### headings in the chapter. Do NOT add any other ## or ### "
+                "headings. Within each required section you may use #### "
+                "sub-headings, callout blocks, markdown tables, and numbered "
+                "lists to include: detailed exposition, at least three worked "
+                "examples, exam-style Q&A (grouped tasks with numbered "
+                "questions), and a concise sum-up of the key facts of that "
+                "section. Every required section must still contain "
+                "substantive prose (minimum 4-5 paragraphs).\n\n"
+            )
+        else:
+            depth_template = (
+                "## CHAPTER TEMPLATE (depth 9-10)\n\n"
+                "Follow this EXACT structural template for the chapter:\n\n"
+                "```\n"
+                "## [Chapter Title]\n\n"
+                "[Brief introduction: 2-3 paragraphs motivating the topic, "
+                "explaining its importance, and outlining the chapter structure.]\n\n"
+                "### [Subtopic 1 - Detailed Exposition]\n"
+                "[4-6 paragraphs of rigorous explanation with definitions, "
+                "derivations, examples.]\n"
+                "[Use **Key Word:** markers for definitions.]\n"
+                "[Use > [!exercise] callouts for illustrations.]\n"
+                "[Use > [!review] callouts for caveats.]\n\n"
+                "### [Subtopic 2 - Detailed Exposition]\n"
+                "[Continue for each major subtopic...]\n\n"
+                "[If comparing concepts, use a markdown table:]\n"
+                "| Feature | Concept A | Concept B |\n"
+                "| --- | --- | --- |\n"
+                "| ... | ... | ... |\n\n"
+                "### [Comparative Analysis]\n"
+                "[Task N - Topic: side-by-side comparison.]\n\n"
+                "---\n\n"
+                "### Task 1 - [Subtopic Group A]\n\n"
+                "#### Q1.1 [Exam question]\n"
+                "[Detailed, comprehensive answer in 3-5 paragraphs.]\n\n"
+                "#### Q1.2 [Exam question]\n"
+                "[Detailed answer...]\n\n"
+                "[Continue with Q1.3, Q1.4, ...]\n\n"
+                "### Task 2 - [Subtopic Group B]\n\n"
+                "#### Q2.1 [Exam question]\n"
+                "[Detailed answer...]\n\n"
+                "[Continue with more Tasks as needed...]\n\n"
+                "### Task N - [Comparative Task]\n"
+                "[Questions comparing and contrasting concepts from different "
+                "parts of the chapter.]\n\n"
+                "---\n\n"
+                "### Sum-up\n\n"
+                "#### [Subtopic 1 Name]\n"
+                "- [Complete, self-contained bullet-point fact]\n"
+                "- [Complete, self-contained bullet-point fact]\n"
+                "- [Continue...]\n\n"
+                "#### [Subtopic 2 Name]\n"
+                "- [Complete, self-contained bullet-point fact]\n"
+                "- [Continue...]\n\n"
+                "[If applicable, end with a comparison table summarizing key "
+                "differences.]\n"
+                "```\n\n"
+                "The Tasks and Q&A section should contain 30-40% of the total "
+                "chapter content. The Sum-up should be 10% of the total. "
+                "The remaining 50-60% is detailed exposition.\n\n"
         )
     elif depth_level >= 7:
         depth_template = (

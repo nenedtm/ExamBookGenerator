@@ -16,6 +16,9 @@ llm:
   model: "qwen3"                        # text generation model
   timeout: 120                          # request timeout (seconds)
   max_retries: 3                        # retry count on LLM failure
+  num_ctx_min: 8192                     # minimum context window (tokens) for chapter generation
+  num_ctx_max: 131072                   # maximum context window (tokens). Lower this (e.g. 65536)
+                                        # if your machine runs out of RAM — qwen3 supports up to 131072
 
 # Manual structure
 structure:

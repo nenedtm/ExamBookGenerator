@@ -66,6 +66,26 @@ def _num_predict_for_depth(depth: int) -> int:
     return _NUM_PREDICT_MAP[clamped]
 
 
+def _num_ctx_for_prompt(prompt: str, num_predict: int, cfg: ConfigManager) -> int:
+    """Pick a context window big enough for *prompt* + *num_predict* output.
+
+    Without an explicit ``num_ctx`` Ollama silently truncates the prompt to
+    the model's default window (e.g. 40960 for ``qwen3``), which is far
+    below the chapter prompt size once source chunks are included.  The
+    truncation drops the REQUIRED CHAPTER STRUCTURE instructions, so the
+    model invents/omits section headings and validation fails repeatedly.
+
+    Prompt tokens are estimated at ~4 characters per token, the output
+    budget is added, plus a small margin, then the result is clamped to
+    configurable bounds (``llm.num_ctx_min`` / ``llm.num_ctx_max``).
+    """
+    min_ctx = int(cfg.get("llm.num_ctx_min", 8192))
+    max_ctx = int(cfg.get("llm.num_ctx_max", 131072))
+    estimated_prompt_tokens = len(prompt) // 4
+    requested = estimated_prompt_tokens + num_predict + 4096
+    return max(min_ctx, min(max_ctx, requested))
+
+
 # ── Exceptions ───────────────────────────────────────────────────────────────
 
 
@@ -324,6 +344,7 @@ def _align_outline_headings(
 
     # Pass 1: greedy fuzzy matching (language-agnostic only via shared words).
     assigned: set[int] = set()
+    assigned_lines: set[int] = set()
     for i, prefix, heading_text in heading_lines:
         best_idx = -1
         best_score = 0.0
@@ -337,6 +358,7 @@ def _align_outline_headings(
         if best_idx >= 0 and best_score >= 0.5:
             lines[i] = f"{prefix} {sections[best_idx]}"
             assigned.add(best_idx)
+            assigned_lines.add(i)
 
     # Pass 2: positional fallback for cross-language headings.  Only fires
     # when the number of remaining (non-decorative) headings equals the
@@ -348,7 +370,7 @@ def _align_outline_headings(
     unassigned_headings = [
         (i, prefix, text)
         for (i, prefix, text) in heading_lines
-        if i not in assigned and not _is_decorative_heading(text)
+        if i not in assigned_lines and not _is_decorative_heading(text)
     ]
     unassigned_sections = [
         s_idx for s_idx in range(len(sections)) if s_idx not in assigned
@@ -365,8 +387,54 @@ def _align_outline_headings(
                 unassigned_headings, unassigned_sections
             ):
                 lines[line_idx] = f"{prefix} {sections[sec_idx]}"
+    elif len(unassigned_headings) > len(unassigned_sections) and unassigned_sections:
+        # More leftover headings than leftover sections: the model likely
+        # added Task / Sum-up / question headings on top of translated
+        # syllabus sections.  Match each section to its most similar leftover
+        # heading by char-similarity (works for it/en cognates too); extra
+        # headings that match nothing are left untouched so no body text is
+        # ever relabelled incorrectly.
+        _salvage_translated_headings(
+            lines, unassigned_headings, unassigned_sections, sections,
+        )
 
     return "\n".join(lines)
+
+
+def _salvage_translated_headings(
+    lines: list[str],
+    unassigned_headings: list[tuple[int, str, str]],
+    unassigned_sections: list[int],
+    sections: list[str],
+) -> None:
+    """Rename leftover headings that are translations of outline sections.
+
+    *unassigned_headings* holds ``(line_idx, prefix, text)`` tuples and
+    *unassigned_sections* the indices of sections not yet matched.  Each
+    section is paired with its best-scoring heading (max of word overlap
+    and char similarity); only confident matches (score >= 0.40) are
+    renamed, each heading/section at most once, most confident first.
+    """
+    candidates: list[tuple[float, int, int, int, str]] = []
+    for hi, (line_idx, prefix, text) in enumerate(unassigned_headings):
+        for si in unassigned_sections:
+            score = max(
+                _heading_word_overlap(text, sections[si]),
+                _heading_char_similarity(text, sections[si]),
+            )
+            candidates.append((score, hi, si, line_idx, prefix))
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    used_headings: set[int] = set()
+    used_sections: set[int] = set()
+    for score, hi, si, line_idx, prefix in candidates:
+        if score < 0.40:
+            break
+        if hi in used_headings or si in used_sections:
+            continue
+        lines[line_idx] = f"{prefix} {sections[si]}"
+        used_headings.add(hi)
+        used_sections.add(si)
 
 
 # ── Index entries from sections ──────────────────────────────────────────────
@@ -639,9 +707,10 @@ def generate_chapter(
 
     # ── Query LLM ─────────────────────────────────────────────────────
     num_predict = _num_predict_for_depth(depth_level)
+    num_ctx = _num_ctx_for_prompt(prompt, num_predict, cfg)
     logger.info(
-        "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks, num_predict=%d)",
-        topic.name, scope, depth_level, len(chunks), num_predict,
+        "Generating chapter for topic '%s' (scope=%s, depth=%d, %d chunks, num_predict=%d, num_ctx=%d)",
+        topic.name, scope, depth_level, len(chunks), num_predict, num_ctx,
     )
     parsed = None
     for attempt in range(5):
@@ -650,7 +719,7 @@ def generate_chapter(
         try:
             raw_response = client.generate(
                 prompt,
-                options={"num_predict": num_predict},
+                options={"num_predict": num_predict, "num_ctx": num_ctx},
             )
         except OllamaError as exc:
             # Transient Ollama failure (timeout / connection / response
@@ -713,7 +782,19 @@ def generate_chapter(
             # Only invalid / truncated JSON escalates, with a hard cap.
             if escalate:
                 num_predict = min(int(num_predict * 1.5), 196608)
+                num_ctx = _num_ctx_for_prompt(prompt, num_predict, cfg)
             # Build feedback about what went wrong
+            required_structure = ""
+            if outline_chapter is not None:
+                section_list = "\n".join(
+                    f"  {i + 1}. {s}"
+                    for i, s in enumerate(outline_chapter.sections)
+                )
+                required_structure = (
+                    "\n\n## REQUIRED CHAPTER STRUCTURE (reproduce VERBATIM)\n\n"
+                    f"**Chapter title:** {outline_chapter.title}\n\n"
+                    f"**Sections (in order):**\n{section_list}\n"
+                )
             feedback = (
                 "\n\n## CRITICAL ERROR IN PREVIOUS ATTEMPT\n\n"
                 + " ".join(problems) + "\n"
@@ -729,13 +810,14 @@ def generate_chapter(
                 "translate them into English, even though the body prose "
                 "is in English.\n"
                 "Re-output the COMPLETE corrected JSON with full content."
+                + required_structure
             )
             prompt_with_feedback = prompt + feedback
             prompt = prompt_with_feedback
             logger.warning(
                 "Chapter generation failed for '%s' (attempt %d), "
-                "retrying with num_predict=%d",
-                topic.name, attempt + 1, num_predict,
+                "retrying with num_predict=%d, num_ctx=%d",
+                topic.name, attempt + 1, num_predict, num_ctx,
             )
 
     if parsed is None:
